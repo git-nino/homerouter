@@ -1,4 +1,6 @@
-# requests and cryptography are installed from the Termux repo (python-requests,
-# python-cryptography) via --system-site-packages, so pip only needs these:
+# cryptography is reused from the Termux repo when available (the venv is
+# created with --system-site-packages). requests is installed here because
+# many Termux mirrors no longer package python-requests.
+requests>=2.31
 flask>=3.0
 speedtest-cli>=2.1.3

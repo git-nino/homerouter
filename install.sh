@@ -161,9 +161,12 @@ if [ "$PLATFORM" = "termux" ]; then
   pkg upgrade -y
 
   echo "==> [2/5] Installing Termux packages"
-  pkg install -y \
-    python python-pip python-requests python-cryptography \
-    termux-services curl git clang make libffi openssl
+  pkg install -y python python-pip termux-services curl git clang make libffi openssl
+  # These are optional: some Termux mirrors dropped python-requests, and
+  # cryptography can also come from pip when the repo package is missing.
+  # The venv below uses --system-site-packages, so repo versions are reused.
+  pkg install -y python-cryptography >/dev/null 2>&1 || true
+  pkg install -y python-requests >/dev/null 2>&1 || true
   command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock || true
 
 else

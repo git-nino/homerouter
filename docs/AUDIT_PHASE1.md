@@ -260,12 +260,12 @@ These generic endpoints and plain-login combinations are speculative, not observ
 - Mobile-first dark theme with teal/orange accents.
 - Responsive grids at 600px and 1000px breakpoints.
 - `[hidden] { display: none !important; }` fixes previous visibility conflicts.
-- PWA manifest, service worker, install prompt, and app shell cache are present.
+- PWA manifest, service worker, and app shell cache are present; the in-app install prompt/button was removed in Phase 2 in favor of the browser's *Add to Home screen* menu.
 - `/api/` responses are deliberately excluded from service-worker caching.
 
 ### 6.5 Dashboard gaps versus the target
 
-- No VoIP/Telephony section or Call button exists.
+- VoIP/Telephony and the Call button were added in Phase 2. The original audit predated discovery of the router's `get_voice_status` endpoint; see §12.
 - No normalized-device model; the UI consumes FiberHome-shaped `build_view()` output.
 - No stable metric IDs, types, units, or provenance/source values.
 - No explicit unavailable/unsupported/invalid/not-loaded states.
@@ -311,7 +311,7 @@ The following pieces are worth carrying forward, usually behind new interfaces:
 | Never auto-authenticate after discovery | Explicit Connect exists for first login | Silent re-login on expiry uses stored credentials |
 | Credentials secure, no secrets in JSON/logs/source/debug | Hardcoded defaults in source/docs/UI; plaintext in memory; fallback password echoed | Must remove secrets and add credential interface/provenance |
 | Compatibility states and diagnostics | None | Required state vocabulary and diagnostic reasons absent |
-| Five-card dashboard with Speed Test, WAN, VoIP, System, Devices | Speed/WAN/Optical/System/Devices present; no VoIP | Missing VoIP, universal cards, stale indicators, dialer |
+| Five-card dashboard with Speed Test, WAN, VoIP, System, Devices | Speed/WAN/Optical/VoIP/System/Devices now present; VoIP uses observed `get_voice_status` | Universal model-driven cards, stale indicators, and per-domain diagnostics still pending |
 | Connector Builder CLI | Absent | Need `create`, `validate`, `list` and structural reports |
 | Automated tests including FiberHome regression | Absent | Need mocks/fixtures and physical-device comparison before removing old logic |
 
@@ -418,3 +418,38 @@ The current app stays runnable after every phase. Each phase ends with tests/che
 The existing application is functional and well-suited as a preservation baseline: FiberHome AES login, data collection, speedtest, PWA, and both Termux and Ubuntu service paths are working. It is not yet a generic platform. The main work is to separate the hardcoded FiberHome assumptions into a declarative connector profile, introduce a universal normalized model with explicit availability states, and rebuild the dashboard around that model without losing the proven physical-device behavior.
 
 Recommended next step: approve Phase 2 (canonical model and tests) before any runtime code is restructured.
+
+---
+
+## 12. Post-audit evidence updates (Phase 2 follow-up)
+
+Two conclusions in the original audit were corrected after inspecting the router's own UI assets and testing the physical HG6145F1:
+
+### 12.1 VoIP status is available
+
+The FiberHome web UI loads `/html/voice_info_inter.html`, which polls
+`get_voice_status`. Its JavaScript (`voice_info_inter.js`) shows the following
+observed mapping:
+
+- `voice_status.voice_port_num` — number of voice ports.
+- `voice_status.ServerType` — `2` selects `URI<n>` for the number; other values
+  use `DirectoryNumber<n>`, falling back to `AuthUserName<n>` before `@`.
+- `voice_status.RegAndCallStatus<n>` — registration/call state code. The router
+  UI maps `2` to `IDLE` (other observed codes are mapped in
+  `gateway.VOIP_STATUS_CODES`).
+
+`RouterClient.collect()` now requests `get_voice_status`, `build_view()` exposes
+the parsed result, and the VoIP card displays the observed number and state.
+The Call action is built only from a validated number and hands a `tel:` URI to
+the device dialer after an explicit tap; it never places a call and does not use
+ONT SIP.
+
+### 12.2 Disconnect is a real router logout
+
+The router menu's `realLogout()` posts `do_logout` with `sessionid` and a role
+name (`common`, `admin`, or `superadmin`) derived from `get_login_user`.
+`/api/disconnect` now calls `RouterClient.logout()`, which posts that request,
+clears local session state, and reports whether the router-side logout
+succeeded. A follow-up `get_base_info` on the physical router returned
+`session_valid: 0`, confirming the session was invalidated rather than merely
+forgotten by the app.

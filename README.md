@@ -56,7 +56,7 @@ Platform details:
 | Packages | `pkg` + native `python-cryptography` | `apt-get` |
 | Python deps | `requirements-termux.txt` (system cryptography) | `requirements.txt` |
 | Service | `termux-services` (`gwmon`, autostart) | `systemd` (`gwmon.service`, autostart) |
-| Controls | `svc-status gwmon`, `svc-stop gwmon`, `svc-start gwmon`, `svc-disable gwmon` | `systemctl status gwmon`, `systemctl stop gwmon`, `systemctl start gwmon`, `systemctl disable gwmon`, `journalctl -u gwmon -f` |
+| Controls | `svc-*` or `sv-*` commands, or runit's `sv status/up/down gwmon` + `sv-disable gwmon` (depends on Termux release) | `systemctl status gwmon`, `systemctl stop gwmon`, `systemctl start gwmon`, `systemctl disable gwmon`, `journalctl -u gwmon -f` |
 | Logs | `logcat`/`logger -t gwmon` | `journalctl -u gwmon -f` |
 
 If no service manager is available (e.g. WSL without systemd, or a container),

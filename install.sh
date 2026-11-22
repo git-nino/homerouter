@@ -50,13 +50,32 @@ if [ "$PLATFORM" = "ubuntu" ] && command -v systemctl >/dev/null 2>&1 \
   SYSTEMD_OK=1
 fi
 
-# Termux services renamed sv-* to svc-* in recent releases; support both.
-SVC_PREFIX=""
-if command -v svc-enable >/dev/null 2>&1; then
-  SVC_PREFIX="svc"
-elif command -v sv-enable >/dev/null 2>&1; then
-  SVC_PREFIX="sv"
+# Termux releases expose different service command families:
+#   new: svc-enable / svc-start / svc-stop / svc-status
+#   old: sv-enable  / sv-start  / sv-stop  / sv-status
+#   bare: sv-enable / sv-disable + runit's "sv up|down|status <service>"
+HAS_TERMUX_SVCS=0
+if command -v svc-enable >/dev/null 2>&1 || command -v sv-enable >/dev/null 2>&1; then
+  HAS_TERMUX_SVCS=1
 fi
+
+svc_cmd() {
+  action="$1"; shift
+  if command -v "svc-${action}" >/dev/null 2>&1; then
+    "svc-${action}" "$@"
+  elif command -v "sv-${action}" >/dev/null 2>&1; then
+    "sv-${action}" "$@"
+  elif command -v sv >/dev/null 2>&1; then
+    case "$action" in
+      start)  sv up "$@" ;;
+      stop)   sv down "$@" ;;
+      status) sv status "$@" ;;
+      *)      return 127 ;;
+    esac
+  else
+    return 127
+  fi
+}
 
 if [ "$PLATFORM" = "ubuntu" ] && [ "$(id -u)" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then
@@ -230,11 +249,14 @@ ${LOG_CMD}
 EOF
   chmod +x "${SOURCE_DIR}/log/run"
 
-  if [ -n "$SVC_PREFIX" ]; then
-    ${SVC_PREFIX}-enable "${SERVICE}" || true
-    ${SVC_PREFIX}-stop "${SERVICE}" >/dev/null 2>&1 || true
-    ${SVC_PREFIX}-start "${SERVICE}" || true
-    echo "    termux-service enabled (auto-starts after Termux restarts)"
+  if [ "$HAS_TERMUX_SVCS" -eq 1 ]; then
+    svc_cmd enable "$SERVICE" || true
+    svc_cmd stop "$SERVICE" >/dev/null 2>&1 || true
+    if svc_cmd start "$SERVICE"; then
+      echo "    termux-service enabled and started (auto-starts after Termux restarts)"
+    else
+      echo "    WARNING: service could not be started; try: sv up ${SERVICE}"
+    fi
   else
     create_manual_launcher
   fi
@@ -290,10 +312,22 @@ if [ "$OK" -eq 0 ]; then
 fi
 
 if [ "$PLATFORM" = "termux" ]; then
-  SERVICE_HELP="  svc-status gwmon      check service
+  if command -v svc-status >/dev/null 2>&1; then
+    SERVICE_HELP="  svc-status gwmon      check service
   svc-stop gwmon        stop service
   svc-start gwmon       start service
   svc-disable gwmon     disable autostart"
+  elif command -v sv-status >/dev/null 2>&1; then
+    SERVICE_HELP="  sv-status gwmon       check service
+  sv-stop gwmon         stop service
+  sv-start gwmon        start service
+  sv-disable gwmon      disable autostart"
+  else
+    SERVICE_HELP="  sv status gwmon       check service
+  sv down gwmon         stop service
+  sv up gwmon           start service
+  sv-disable gwmon      disable autostart"
+  fi
   LOG_HELP="  tail -f ${APP_DIR}/gwmon.log   (manual-launch fallback only)"
   NETWORK_HELP="  Open from a PC     : http://<phone-ip>:${PORT}"
 else

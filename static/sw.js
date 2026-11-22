@@ -1,6 +1,6 @@
 /* Service worker for offline app shell. localhost is a secure context,
    so this installs without HTTPS when the app runs on the phone itself. */
-const CACHE = 'gwmon-v1';
+const CACHE = 'gwmon-v2';
 const SHELL = [
   '/',
   '/static/style.css',

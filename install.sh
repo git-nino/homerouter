@@ -258,9 +258,25 @@ EOF
   chmod +x "${SOURCE_DIR}/log/run"
 
   if [ "$HAS_TERMUX_SVCS" -eq 1 ]; then
-    svc_cmd enable "$SERVICE" || true
     svc_cmd stop "$SERVICE" >/dev/null 2>&1 || true
-    if svc_cmd start "$SERVICE"; then
+    svc_cmd enable "$SERVICE" || true
+
+    # runit creates supervise/ asynchronously for a brand-new service; wait
+    # for it before giving up on "sv up".
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      [ -e "${SOURCE_DIR}/supervise/ok" ] && break
+      sleep 1
+    done
+
+    STARTED=0
+    for i in 1 2 3 4 5; do
+      if svc_cmd start "$SERVICE" >/dev/null 2>&1; then
+        STARTED=1
+        break
+      fi
+      sleep 1
+    done
+    if [ "$STARTED" -eq 1 ]; then
       echo "    termux-service enabled and started (auto-starts after Termux restarts)"
     else
       echo "    WARNING: service could not be started; try: sv up ${SERVICE}"
@@ -315,7 +331,9 @@ for i in $(seq 1 15); do
   sleep 2
 done
 
-if [ "$OK" -eq 0 ]; then
+if [ "$OK" -eq 1 ]; then
+  echo "    app is up on port ${PORT}"
+else
   echo "WARNING: the app did not respond yet. Check logs and start it manually with ${APP_DIR}/start.sh" >&2
 fi
 

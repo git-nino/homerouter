@@ -44,8 +44,14 @@ curl -fsSL https://raw.githubusercontent.com/git-nino/homerouter/main/install.sh
 
 Or, from a local checkout: `bash install.sh`.
 
-If `raw.githubusercontent.com` serves a stale copy after an update, use
-`https://github.com/git-nino/homerouter/raw/refs/heads/main/install.sh` instead.
+If `raw.githubusercontent.com` serves a stale copy after an update, fetch the
+current file through the GitHub API instead:
+
+```bash
+curl -fsSL "https://api.github.com/repos/git-nino/homerouter/contents/install.sh?t=$(date +%s)" \
+  | python3 -c "import sys,json,base64;sys.stdout.write(base64.b64decode(json.load(sys.stdin)['content']).decode())" \
+  | bash
+```
 
 It detects **Termux** (Android) vs **Ubuntu/Debian**, updates/upgrades packages,
 creates `~/.venvs/gwmon`, installs dependencies, registers a service, and starts

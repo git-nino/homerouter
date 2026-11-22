@@ -143,7 +143,8 @@ function renderVoip(d) {
   const phone = phoneMetric.value !== undefined
     ? phoneMetric.value
     : (voip.phone_number || voip.phoneNumber || null);
-  const availability = phoneMetric.availability || voip.phone_number_availability || 'not_loaded';
+  const availability = phoneMetric.availability || voip.phone_number_availability
+    || voip.availability || 'not_loaded';
   const registration = regMetric.value !== undefined
     ? regMetric.value
     : (voip.registration_state || voip.registrationState || null);
@@ -334,8 +335,13 @@ async function pollSpeed() {
 
 /* ---------- disconnect ---------- */
 $('disconnectBtn').addEventListener('click', async () => {
-  await fetch('/api/disconnect', { method: 'POST' });
-  leaveDashboard('Disconnected.');
+  let message = 'Disconnected.';
+  try {
+    const response = await fetch('/api/disconnect', { method: 'POST' });
+    const payload = await response.json();
+    if (payload && payload.message) message = payload.message;
+  } catch (e) { /* local state was still cleared by the server */ }
+  leaveDashboard(message);
 });
 
 function leaveDashboard(message) {

@@ -59,8 +59,9 @@ Platform details:
 | Controls | `svc-status gwmon`, `svc-stop gwmon`, `svc-start gwmon`, `svc-disable gwmon` | `systemctl status gwmon`, `systemctl stop gwmon`, `systemctl start gwmon`, `systemctl disable gwmon`, `journalctl -u gwmon -f` |
 | Logs | `logcat`/`logger -t gwmon` | `journalctl -u gwmon -f` |
 
-If no service manager is available, the installer falls back to a `start.sh`
-launcher writing `gwmon.log` in the app directory.
+If no service manager is available (e.g. WSL without systemd, or a container),
+or a Termux release uses the older `sv-*` commands, the installer falls back
+automatically to a `start.sh` launcher writing `gwmon.log` in the app directory.
 
 ## PWA (install without HTTPS)
 

@@ -43,6 +43,21 @@ fi
 
 echo "==> Platform: ${PLATFORM}"
 
+# WSL and containers often have systemctl installed but no running systemd.
+SYSTEMD_OK=0
+if [ "$PLATFORM" = "ubuntu" ] && command -v systemctl >/dev/null 2>&1 \
+   && [ -d /run/systemd/system ]; then
+  SYSTEMD_OK=1
+fi
+
+# Termux services renamed sv-* to svc-* in recent releases; support both.
+SVC_PREFIX=""
+if command -v svc-enable >/dev/null 2>&1; then
+  SVC_PREFIX="svc"
+elif command -v sv-enable >/dev/null 2>&1; then
+  SVC_PREFIX="sv"
+fi
+
 if [ "$PLATFORM" = "ubuntu" ] && [ "$(id -u)" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then
     SUDO="sudo"
@@ -102,6 +117,13 @@ elif [ -f "${APP_DIR}/app.py" ]; then
   echo "==> Using existing checkout: ${APP_DIR}"
 else
   fetch_project
+fi
+
+# When launched from a URL, refresh an existing checkout on re-runs.
+if [ -z "$SCRIPT_DIR" ] && [ -d "${APP_DIR}/.git" ]; then
+  echo "==> Updating existing checkout"
+  git -C "$APP_DIR" pull --ff-only 2>/dev/null || \
+    echo "    update skipped (local changes or no network) — continuing"
 fi
 
 cd "$APP_DIR"
@@ -194,24 +216,31 @@ export PATH="${VENV}/bin:\${PATH}"
 exec "${VENV}/bin/python" app.py
 EOF
   chmod +x "${SOURCE_DIR}/run"
-  cat > "${SOURCE_DIR}/log/run" <<'EOF'
+
+  if command -v logger >/dev/null 2>&1; then
+    LOG_CMD="exec logger -t gwmon"
+  else
+    mkdir -p "${PREFIX}/var/log"
+    LOG_CMD="exec cat > ${PREFIX}/var/log/${SERVICE}.log"
+  fi
+  cat > "${SOURCE_DIR}/log/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
 exec 2>&1
-exec logger -t gwmon
+${LOG_CMD}
 EOF
   chmod +x "${SOURCE_DIR}/log/run"
 
-  if command -v svc-enable >/dev/null 2>&1; then
-    svc-enable "${SERVICE}" || true
-    svc-stop "${SERVICE}" >/dev/null 2>&1 || true
-    svc-start "${SERVICE}" || true
+  if [ -n "$SVC_PREFIX" ]; then
+    ${SVC_PREFIX}-enable "${SERVICE}" || true
+    ${SVC_PREFIX}-stop "${SERVICE}" >/dev/null 2>&1 || true
+    ${SVC_PREFIX}-start "${SERVICE}" || true
     echo "    termux-service enabled (auto-starts after Termux restarts)"
   else
     create_manual_launcher
   fi
 else
   UNIT="/etc/systemd/system/${SERVICE}.service"
-  if command -v systemctl >/dev/null 2>&1; then
+  if [ "$SYSTEMD_OK" -eq 1 ]; then
     ${SUDO} tee "$UNIT" >/dev/null <<EOF
 [Unit]
 Description=Gateway Monitor (router dashboard)
@@ -231,10 +260,14 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-    ${SUDO} systemctl daemon-reload
-    ${SUDO} systemctl enable --now "$SERVICE"
-    echo "    systemd service enabled and started"
+    if ${SUDO} systemctl daemon-reload && ${SUDO} systemctl enable --now "$SERVICE"; then
+      echo "    systemd service enabled and started"
+    else
+      echo "    systemctl could not start the service — using manual launcher"
+      create_manual_launcher
+    fi
   else
+    echo "    systemd not running (WSL/container) — using manual launcher"
     create_manual_launcher
   fi
 fi
@@ -288,7 +321,7 @@ ${LOG_HELP}
 
  PWA installation
    Open http://localhost:${PORT} in Chrome, tap the menu
-   ("Add to Home screen" / the download Install button).
+   ("Add to Home screen" / the ⬇ Install button).
    localhost is a secure context, so no HTTPS is needed.
    Installing via http://<ip>:${PORT} will NOT offer the
    PWA prompt — use localhost on the device itself.

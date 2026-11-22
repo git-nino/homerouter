@@ -381,7 +381,7 @@ ${LOG_HELP}
 
  PWA installation
    Open http://localhost:${PORT} in Chrome, tap the menu
-   ("Add to Home screen" / the ⬇ Install button).
+   ("Add to Home screen"). There is no in-app install button.
    localhost is a secure context, so no HTTPS is needed.
    Installing via http://<ip>:${PORT} will NOT offer the
    PWA prompt — use localhost on the device itself.

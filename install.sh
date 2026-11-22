@@ -308,6 +308,11 @@ WantedBy=multi-user.target
 EOF
     if ${SUDO} systemctl daemon-reload && ${SUDO} systemctl enable --now "$SERVICE"; then
       echo "    systemd service enabled and started"
+      # enable --now does not restart an already-active unit, so pull an
+      # updated checkout into the running process explicitly.
+      if ${SUDO} systemctl is-active --quiet "$SERVICE"; then
+        ${SUDO} systemctl restart "$SERVICE"
+      fi
     else
       echo "    systemctl could not start the service — using manual launcher"
       create_manual_launcher

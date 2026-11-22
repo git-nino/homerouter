@@ -28,8 +28,10 @@ First run creates `~/.venvs/gwmon` and installs `flask`, `requests`,
    Non-FiberHome routers show a **Discovered router data** panel with whatever
    their endpoints expose.
 4. The dashboard auto-refreshes every 5 seconds and shows public IP, uptime,
-   optical TX/RX power, CPU/memory/flash, WAN details, connected devices, LAN
-   ports and SSIDs.
+   optical TX/RX power, CPU/memory/flash, WAN details, VoIP/telephony state,
+   connected devices, LAN ports and SSIDs. The Call button appears only when a
+   validated phone number is available and opens your phone's dialer; the app
+   never places the call itself.
 5. Tap **⚡ Speedtest** at the top to run a download / upload / latency test
    (uses `speedtest-cli`; the test runs in the background and takes ~30–60 s).
 
@@ -74,19 +76,29 @@ automatically to a `start.sh` launcher writing `gwmon.log` in the app directory.
 
 ## PWA (install without HTTPS)
 
-Open **http://localhost:7000** in Chrome on the phone and use
-*Add to Home screen* (or the **⬇ Install** button). Browsers treat `localhost`
-as a secure context, so the service worker and install prompt work without a
-certificate. Opening the app via `http://<phone-ip>:7000` will show the
-dashboard, but PWA installation will not be offered — use `localhost` for that.
+Open **http://localhost:7000** in Chrome on the phone and use the browser's
+*Add to Home screen* menu. There is no in-app install button. Browsers treat
+`localhost` as a secure context, so the service worker and PWA installation
+work without a certificate. Opening the app via `http://<phone-ip>:7000` will
+show the dashboard, but PWA installation will not be offered — use `localhost`
+for that.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## Files
 
 - `app.py` — Flask server, API routes, speedtest worker
 - `gateway.py` — gateway detection, AES login, data collection
-- `templates/index.html`, `static/*` — responsive dashboard UI
+- `models/` — universal normalized FTTH model (seven domains, explicit availability states, safe dialer actions)
+- `tests/` — unit tests for the model, phone validation, and future connectors
+- `templates/index.html`, `static/*` — responsive dashboard UI with the VoIP/Telephony card in the five-card order
 - `requirements.txt`, `requirements-termux.txt` — dependencies
 - `run.sh` — simple desktop launcher
 - `install.sh` — universal Termux/Ubuntu installer + service setup (works via `curl | bash`)
 - `.gitignore` — keeps caches, venvs and logs out of git
 - `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png` — PWA assets
+- `docs/AUDIT_PHASE1.md` — Phase 1 architecture audit and phased migration plan

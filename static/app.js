@@ -28,6 +28,25 @@ function setBar(id, percent) {
 }
 function show(id, visible) { $(id).hidden = !visible; }
 
+/* Accept only digits, separators, and one optional leading '+'. */
+function dialUriFrom(value) {
+  if (value === undefined || value === null) return null;
+  const raw = String(value).trim();
+  if (!raw || /[A-Za-z]/.test(raw)) return null;
+  if ((raw.match(/\+/g) || []).length > 1) return null;
+  const international = raw.startsWith('+');
+  if (raw.includes('+') && !international) return null;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+  return encodeURI('tel:' + (international ? '+' : '') + digits);
+}
+
+function metricValue(model, domain, metricId) {
+  const domains = (model && model.domains) || {};
+  const metric = (domains[domain] || {})[metricId] || {};
+  return metric;
+}
+
 /* ---------- gateway detection ---------- */
 async function loadGateway() {
   try {
@@ -115,6 +134,46 @@ async function refreshData() {
   }
 }
 
+function renderVoip(d) {
+  const voip = d.voip || {};
+  const phoneMetric = metricValue(d, 'voip', 'voip.phone_number');
+  const regMetric = metricValue(d, 'voip', 'voip.registration_state');
+  const action = d.call_action || voip.call_action || null;
+
+  const phone = phoneMetric.value !== undefined
+    ? phoneMetric.value
+    : (voip.phone_number || voip.phoneNumber || null);
+  const availability = phoneMetric.availability || voip.phone_number_availability || 'not_loaded';
+  const registration = regMetric.value !== undefined
+    ? regMetric.value
+    : (voip.registration_state || voip.registrationState || null);
+
+  let dialUri = null;
+  let reason = action ? action.reason : null;
+  if (action) {
+    if (action.enabled && action.dial_uri) dialUri = action.dial_uri;
+  } else if (availability === 'available' || availability === 'stale') {
+    dialUri = dialUriFrom(phone);
+    if (!dialUri) reason = 'Phone number failed validation.';
+  } else {
+    reason = 'No validated phone number is available for this profile.';
+  }
+
+  const stateText = registration || String(availability).replace(/_/g, ' ');
+  $('voipState').textContent = stateText;
+  $('voipState').className = 'pill' + (dialUri ? '' : ' warn');
+  setText('voipPhone', phone);
+  setText('voipRegistration', registration ? 'Registration: ' + registration : 'State: ' + stateText);
+
+  const btn = $('voipCallBtn');
+  btn.dataset.dialUri = dialUri || '';
+  btn.hidden = !dialUri;
+  btn.disabled = !dialUri;
+  $('voipNote').textContent = dialUri
+    ? 'Opens your phone dialer with the number prefilled. No call is placed automatically.'
+    : (reason || 'Call is unavailable.');
+}
+
 function render(d) {
   const dev = d.device || {}, net = d.internet || {}, sys = d.system || {}, opt = d.optical || {};
 
@@ -130,6 +189,7 @@ function render(d) {
   setText('sOperator', dev.operator);
   setBar('barCpu', sys.cpu);
   setBar('barMem', sys.memory);
+  renderVoip(d);
 
   $('wanStatusPill').textContent = net.status || '–';
   $('wanStatusPill').className = net.status === 'Connected' ? 'pill' : 'pill warn';
@@ -201,6 +261,13 @@ function render(d) {
 
   $('lastUpdate').textContent = 'last update ' + new Date().toLocaleTimeString();
 }
+
+/* ---------- voip call (explicit tap only) ---------- */
+$('voipCallBtn').addEventListener('click', () => {
+  const uri = $('voipCallBtn').dataset.dialUri;
+  if (!uri || !uri.startsWith('tel:')) return;
+  window.location.href = uri;
+});
 
 /* ---------- speedtest ---------- */
 $('speedBtn').addEventListener('click', async () => {
@@ -285,20 +352,7 @@ function leaveDashboard(message) {
   msg.textContent = message || '';
 }
 
-/* ---------- PWA install ---------- */
-let deferredPrompt = null;
-window.addEventListener('beforeinstallprompt', (event) => {
-  event.preventDefault();
-  deferredPrompt = event;
-  show('installBtn', true);
-});
-$('installBtn').addEventListener('click', async () => {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  await deferredPrompt.userChoice;
-  deferredPrompt = null;
-  show('installBtn', false);
-});
+/* ---------- PWA (install from the browser menu) ---------- */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/static/sw.js').catch(() => {});

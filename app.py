@@ -7,7 +7,8 @@ import threading
 
 from flask import Flask, jsonify, render_template, request
 
-from gateway import RouterClient, as_ip, detect_gateway, human_uptime
+from gateway import RouterClient, as_ip, detect_gateway, human_uptime, parse_voice_status
+from models.phone import build_call_action
 
 try:
     import speedtest
@@ -46,6 +47,7 @@ def build_view(raw):
     dongles = (raw.get("get_dongle_info", {}) or {}).get("dongle_info", []) or []
     wifi = wan_data.get("wifi_obj_enable", {}) or {}
     meta = raw.get("_meta", {}) or {}
+    voip = parse_voice_status(raw.get("get_voice_status", {}))
 
     total = int(base.get("mem_total") or 0)
     free = int(base.get("mem_free") or 0)
@@ -104,6 +106,8 @@ def build_view(raw):
             "uptime_raw": wan.get("Uptime", "0"),
             "error": wan.get("LastConnectionError", ""),
         },
+        "voip": voip,
+        "call_action": build_call_action(voip["phone_number"]).to_dict(),
         "system": {
             "uptime": human_uptime(base.get("uptime", 0)),
             "uptime_raw": base.get("uptime", "0"),
@@ -311,10 +315,27 @@ def api_data():
 @app.route("/api/disconnect", methods=["POST"])
 def api_disconnect():
     with _lock:
+        client = state["client"]
         state["client"] = None
         state["credentials"] = None
         state["connected"] = False
-    return jsonify({"ok": True})
+
+    router_logout = True
+    if client is not None:
+        try:
+            router_logout, _ = client.logout()
+        except Exception:                                # pragma: no cover
+            router_logout = False
+
+    return jsonify({
+        "ok": True,
+        "router_logout": router_logout,
+        "message": (
+            "Disconnected."
+            if router_logout
+            else "Disconnected locally; router session could not be ended."
+        ),
+    })
 
 
 @app.route("/api/speedtest", methods=["POST"])

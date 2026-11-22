@@ -19,6 +19,27 @@ import requests
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from requests.auth import HTTPBasicAuth
 
+VOIP_STATUS_CODES = {
+    "0": "INACTIVE",
+    "1": "REGISTERING",
+    "2": "IDLE",
+    "3": "OFF_HOOK",
+    "4": "DIALING",
+    "5": "RING",
+    "6": "RINGBACK",
+    "7": "CONNECTING",
+    "8": "CONNECTED",
+    "9": "ON_HOOK",
+    "10": "DISCONNECTING",
+    "11": "BUSY",
+    "12": "REG_FAIL",
+    "13": "LINE_FAIL",
+    "14": "NOT_FOUND",
+    "15": "AUTH",
+    "16": "NO_RESPONSE",
+    "17": "IP_CONFIG",
+}
+
 COMMON_GATEWAYS = [
     "192.168.1.1", "192.168.0.1", "192.168.2.1", "192.168.100.1",
     "10.0.0.1", "10.1.1.1", "172.16.0.1", "192.168.10.1",
@@ -194,6 +215,48 @@ def human_uptime(seconds):
     return f"{hours}h {minutes}m {secs}s"
 
 
+def parse_voice_status(raw):
+    """Map the observed voice_status payload to display-ready VoIP fields.
+
+    The source mapping comes from the router's own voice_info_inter.js:
+    ServerType 2 uses URI<n>; other server types use DirectoryNumber<n> with
+    AuthUserName<n> (before '@') as fallback. RegAndCallStatus<n> is the
+    registration/call state code shown by the router UI.
+    """
+
+    voice = (raw or {}).get("voice_status", {}) or {}
+    try:
+        ports = int(voice.get("voice_port_num") or 0)
+    except (TypeError, ValueError):
+        ports = 0
+
+    result = {
+        "phone_number": "",
+        "registration_code": "",
+        "registration_state": "",
+        "availability": "unsupported",
+        "source": "get_voice_status",
+    }
+    if ports < 1:
+        return result
+
+    server_type = str(voice.get("ServerType", ""))
+    number = ""
+    if server_type == "2":
+        number = voice.get("URI1", "") or ""
+    else:
+        number = voice.get("DirectoryNumber1", "") or ""
+        if not number:
+            number = str(voice.get("AuthUserName1", "") or "").split("@")[0]
+
+    code = str(voice.get("RegAndCallStatus1", "") or "")
+    result["phone_number"] = str(number or "")
+    result["registration_code"] = code
+    result["registration_state"] = VOIP_STATUS_CODES.get(code, "unknown" if code else "")
+    result["availability"] = "available" if number else "unavailable"
+    return result
+
+
 def _looks_successful(response):
     """Heuristic for a successful plain/basic login response."""
     payload = _parse_response(response)
@@ -352,13 +415,46 @@ class RouterClient:
 
         return False, " | ".join(attempts) if attempts else "Unknown auth mode."
 
+    def _logout_username(self):
+        """Resolve the role name expected by the router's do_logout method."""
+
+        role = str((self.get("get_login_user") or {}).get("login_user", ""))
+        if role in ("4", "superadmin"):
+            return "superadmin"
+        if role in ("2", "admin"):
+            return "admin"
+        return "common"
+
+    def logout(self):
+        """Explicitly end the router session using the router's own do_logout.
+
+        The firmware replies with session_valid 1 to do_logout, but a following
+        get_base_info reports session_valid 0, so HTTP 200 is the success
+        signal here. Local state is always cleared even if the request fails.
+        """
+
+        if not self.logged_in and not self.sessionid:
+            return True, "No active router session."
+
+        response = self._post("/cgi-bin/ajax", {
+            "ajaxmethod": "do_logout",
+            "sessionid": self.sessionid or "",
+            "username": self._logout_username(),
+        })
+        self.logged_in = False
+        self.sessionid = None
+        self.http.auth = None
+        if response is None or response.status_code != 200:
+            return False, "Router logout request failed."
+        return True, "Disconnected from router."
+
     # ---------- data collection ----------
     def collect(self):
         """Fetch router data using the known profile plus generic fallbacks."""
         methods = [
             "get_base_info", "get_allwan_info", "get_lan_status",
             "get_operator", "get_device_name", "get_dongle_info",
-            "get_ipv6_lan", "get_login_user",
+            "get_ipv6_lan", "get_login_user", "get_voice_status",
         ]
         raw = {name: self.get(name) for name in methods}
         self.model = raw.get("get_device_name", {}).get("ModelName", "")

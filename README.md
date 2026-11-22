@@ -34,6 +34,9 @@ First run creates `~/.venvs/gwmon` and installs `flask`, `requests`,
    never places the call itself.
 5. Tap **⚡ Speedtest** at the top to run a download / upload / latency test
    (uses `speedtest-cli`; the test runs in the background and takes ~30–60 s).
+6. **Disconnect** clears the local session and also sends `do_logout` to the
+   router, so a subsequent direct login attempt sees a fresh session instead of
+   "already connected".
 
 ## One-command install (Termux or Ubuntu)
 

@@ -115,22 +115,8 @@
       <div class="card stat"><span class="stat-label">UPTIME</span><span id="sUptime" class="stat-value">–</span><span class="stat-sub">system</span></div>
       <div class="card stat"><span class="stat-label">OPTICAL TX</span><span id="sTx" class="stat-value accent2">–</span><span class="stat-sub">dBm · transmit</span></div>
       <div class="card stat"><span class="stat-label">OPTICAL RX</span><span id="sRx" class="stat-value accent">–</span><span class="stat-sub">dBm · receive</span></div>
-      <div class="card stat"><span class="stat-label">CPU</span><span id="sCpu" class="stat-value">–</span><div class="bar"><i id="barCpu"></i></div></div>
-      <div class="card stat"><span class="stat-label">MEMORY</span><span id="sMem" class="stat-value">–</span><div class="bar"><i id="barMem"></i></div></div>
       <div class="card stat"><span class="stat-label">DEVICES</span><span id="sDevices" class="stat-value">–</span><span class="stat-sub">connected</span></div>
       <div class="card stat"><span class="stat-label">MODEL</span><span id="sModel" class="stat-value small">–</span><span id="sOperator" class="stat-sub">–</span></div>
-    </div>
-
-    <!-- WAN + Optical -->
-    <div class="panel-grid">
-      <div class="card panel">
-        <div class="panel-head"><h2>🌐 Internet / WAN</h2><span id="wanStatusPill" class="pill">–</span></div>
-        <div class="table-wrap"><table class="kv" id="wanTable"></table></div>
-      </div>
-      <div class="card panel">
-        <div class="panel-head"><h2>🔦 Optical fiber / PON</h2><span id="ponPill" class="pill">–</span></div>
-        <div class="table-wrap"><table class="kv" id="ponTable"></table></div>
-      </div>
     </div>
 
     <!-- VoIP / Telephony -->
@@ -151,6 +137,18 @@
         </div>
       </div>
       <p class="footer-note">Calls use your phone's dialer over mobile/VoIP telephony. The app never places a call automatically and does not use ONT SIP.</p>
+    </div>
+
+    <!-- WAN + Optical -->
+    <div class="panel-grid">
+      <div class="card panel">
+        <div class="panel-head"><h2>🌐 Internet / WAN</h2><span id="wanStatusPill" class="pill">–</span></div>
+        <div class="table-wrap"><table class="kv" id="wanTable"></table></div>
+      </div>
+      <div class="card panel">
+        <div class="panel-head"><h2>🔦 Optical fiber / PON</h2><span id="ponPill" class="pill">–</span></div>
+        <div class="table-wrap"><table class="kv" id="ponTable"></table></div>
+      </div>
     </div>
 
     <!-- System + LAN + WiFi -->

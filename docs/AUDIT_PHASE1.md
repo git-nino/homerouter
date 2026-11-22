@@ -453,3 +453,11 @@ clears local session state, and reports whether the router-side logout
 succeeded. A follow-up `get_base_info` on the physical router returned
 `session_valid: 0`, confirming the session was invalidated rather than merely
 forgotten by the app.
+
+### 12.3 Dashboard tile order
+
+The headline summary tiles are now ordered Public IP, Uptime, Optical TX,
+Optical RX, Devices, Model. CPU and memory tiles were removed because both
+values remain available in the System Information panel. The VoIP/Telephony
+card was moved directly after the summary tiles, before WAN/Optical and the
+remaining panels.

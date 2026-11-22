@@ -27,11 +27,12 @@ First run creates `~/.venvs/gwmon` and installs `flask`, `requests`,
    actually returns data. Pick a specific mode if you know your router type.
    Non-FiberHome routers show a **Discovered router data** panel with whatever
    their endpoints expose.
-4. The dashboard auto-refreshes every 5 seconds and shows public IP, uptime,
-   optical TX/RX power, CPU/memory/flash, WAN details, VoIP/telephony state,
-   connected devices, LAN ports and SSIDs. The Call button appears only when a
-   validated phone number is available and opens your phone's dialer; the app
-   never places the call itself.
+4. The dashboard auto-refreshes every 5 seconds. Summary tiles appear in this
+   order: Public IP, Uptime, Optical TX, Optical RX, Devices, Model. CPU and
+   memory remain in the System Information panel. The VoIP/Telephony card comes
+   next, followed by WAN/Optical, System/LAN/WiFi and Connected Devices. The
+   Call button appears only when a validated phone number is available and
+   opens your phone's dialer; the app never places the call itself.
 5. Tap **⚡ Speedtest** at the top to run a download / upload / latency test
    (uses `speedtest-cli`; the test runs in the background and takes ~30–60 s).
 6. **Disconnect** clears the local session and also sends `do_logout` to the

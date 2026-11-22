@@ -22,10 +22,6 @@ function kvTable(id, rows) {
     `<tr><td>${esc(k)}</td><td>${esc(v == null || v === '' ? '–' : v)}</td></tr>`
   ).join('');
 }
-function setBar(id, percent) {
-  const el = $(id);
-  if (el) el.style.width = Math.min(100, Math.max(0, Number(percent) || 0)) + '%';
-}
 function show(id, visible) { $(id).hidden = !visible; }
 
 /* Accept only digits, separators, and one optional leading '+'. */
@@ -183,13 +179,9 @@ function render(d) {
   setText('sUptime', sys.uptime);
   setText('sTx', opt.tx);
   setText('sRx', opt.rx);
-  setText('sCpu', sys.cpu + '%');
-  setText('sMem', sys.memory + '%');
   setText('sDevices', (d.devices || []).length);
   setText('sModel', dev.model);
   setText('sOperator', dev.operator);
-  setBar('barCpu', sys.cpu);
-  setBar('barMem', sys.memory);
   renderVoip(d);
 
   $('wanStatusPill').textContent = net.status || '–';

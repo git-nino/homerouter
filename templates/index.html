@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f16">
+  <title>Gateway Monitor</title>
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">◈</span> GATEWAY<span class="brand-accent">MONITOR</span></div>
+  <div class="top-actions">
+    <span id="gatewayBadge" class="badge">detecting…</span>
+    <span id="statusDot" class="dot dot-off" title="Connection status"></span>
+    <button id="installBtn" class="btn btn-ghost" hidden>⬇ Install</button>
+    <button id="speedBtn" class="btn btn-speed" hidden>⚡ Speedtest</button>
+    <button id="disconnectBtn" class="btn btn-ghost" hidden>⏻</button>
+  </div>
+</header>
+
+<main>
+  <!-- ================= LOGIN ================= -->
+  <section id="loginView" class="login-wrap">
+    <div class="card login-card">
+      <div class="login-head">
+        <div class="login-icon">◈</div>
+        <div>
+          <h1>Connect to gateway</h1>
+          <p class="muted">Credentials are prefilled — just press <strong>Enter</strong>.</p>
+        </div>
+      </div>
+
+      <form id="loginForm" autocomplete="on">
+        <div class="field">
+          <label for="gatewayInput">Gateway address</label>
+          <div class="input-wrap">
+            <span class="input-icon">⇄</span>
+            <input id="gatewayInput" name="gateway" type="text" inputmode="url"
+                   placeholder="192.168.1.1" value="192.168.1.1">
+          </div>
+          <small class="hint">Auto-detected from your network. Edit if needed.</small>
+        </div>
+
+        <div class="field">
+          <label for="modeInput">Authentication mode</label>
+          <div class="input-wrap">
+            <span class="input-icon">⚙</span>
+            <select id="modeInput" name="mode">
+              <option value="auto">Auto-detect (recommended)</option>
+              <option value="fiberhome">FiberHome / ONU (AES)</option>
+              <option value="plain">Plain-text login</option>
+              <option value="basic">HTTP Basic auth</option>
+            </select>
+          </div>
+          <small class="hint">Auto tries each method and keeps the one that works.</small>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="userInput">Username</label>
+            <div class="input-wrap">
+              <span class="input-icon">◉</span>
+              <input id="userInput" name="username" type="text" value="user" autocomplete="username">
+            </div>
+          </div>
+          <div class="field">
+            <label for="passInput">Password</label>
+            <div class="input-wrap">
+              <span class="input-icon">✳</span>
+              <input id="passInput" name="password" type="password" value="user1234"
+                     autocomplete="current-password">
+              <button type="button" id="showPass" class="eye" title="Show password">👁</button>
+            </div>
+          </div>
+        </div>
+
+        <button id="loginBtn" type="submit" class="btn btn-primary btn-block">Connect →</button>
+      </form>
+      <div id="loginMsg" class="msg" role="status"></div>
+      <p class="footer-note">Local tool · nothing is sent anywhere except your gateway</p>
+    </div>
+  </section>
+
+  <!-- ================= DASHBOARD ================= -->
+  <section id="dashView" hidden>
+
+    <!-- speedtest panel -->
+    <div id="speedPanel" class="card speed-panel" hidden>
+      <div class="panel-head">
+        <h2>⚡ Speedtest</h2>
+        <span id="speedState" class="pill">idle</span>
+      </div>
+      <div id="speedIdle" class="speed-idle muted">Press <strong>⚡ Speedtest</strong> above to measure download, upload and latency.</div>
+      <div id="speedProgress" class="speed-progress" hidden>
+        <div class="spinner"></div><span id="speedProgressText">Working…</span>
+      </div>
+      <div id="speedResult" class="speed-result" hidden>
+        <div class="speed-metric"><span class="metric-label">DOWNLOAD</span><span id="spDown" class="metric-value accent">–</span><span class="metric-unit">Mbps</span></div>
+        <div class="speed-metric"><span class="metric-label">UPLOAD</span><span id="spUp" class="metric-value accent2">–</span><span class="metric-unit">Mbps</span></div>
+        <div class="speed-metric"><span class="metric-label">PING</span><span id="spPing" class="metric-value">–</span><span class="metric-unit">ms</span></div>
+        <div class="speed-metric"><span class="metric-label">JITTER</span><span id="spJitter" class="metric-value">–</span><span class="metric-unit">ms</span></div>
+        <div class="speed-server" id="spServer"></div>
+      </div>
+      <div id="speedError" class="msg error" hidden></div>
+    </div>
+
+    <!-- headline stat cards -->
+    <div class="stat-grid" id="statGrid">
+      <div class="card stat"><span class="stat-label">PUBLIC IP</span><span id="sPublicIp" class="stat-value accent">–</span><span id="sStatus" class="stat-sub">–</span></div>
+      <div class="card stat"><span class="stat-label">UPTIME</span><span id="sUptime" class="stat-value">–</span><span class="stat-sub">system</span></div>
+      <div class="card stat"><span class="stat-label">OPTICAL TX</span><span id="sTx" class="stat-value accent2">–</span><span class="stat-sub">dBm · transmit</span></div>
+      <div class="card stat"><span class="stat-label">OPTICAL RX</span><span id="sRx" class="stat-value accent">–</span><span class="stat-sub">dBm · receive</span></div>
+      <div class="card stat"><span class="stat-label">CPU</span><span id="sCpu" class="stat-value">–</span><div class="bar"><i id="barCpu"></i></div></div>
+      <div class="card stat"><span class="stat-label">MEMORY</span><span id="sMem" class="stat-value">–</span><div class="bar"><i id="barMem"></i></div></div>
+      <div class="card stat"><span class="stat-label">DEVICES</span><span id="sDevices" class="stat-value">–</span><span class="stat-sub">connected</span></div>
+      <div class="card stat"><span class="stat-label">MODEL</span><span id="sModel" class="stat-value small">–</span><span id="sOperator" class="stat-sub">–</span></div>
+    </div>
+
+    <!-- WAN + Optical -->
+    <div class="panel-grid">
+      <div class="card panel">
+        <div class="panel-head"><h2>🌐 Internet / WAN</h2><span id="wanStatusPill" class="pill">–</span></div>
+        <div class="table-wrap"><table class="kv" id="wanTable"></table></div>
+      </div>
+      <div class="card panel">
+        <div class="panel-head"><h2>🔦 Optical fiber / PON</h2><span id="ponPill" class="pill">–</span></div>
+        <div class="table-wrap"><table class="kv" id="ponTable"></table></div>
+      </div>
+    </div>
+
+    <!-- Devices -->
+    <div class="card panel">
+      <div class="panel-head"><h2>📱 Connected devices</h2><span id="deviceCount" class="pill">0</span></div>
+      <div class="table-wrap">
+        <table class="data-table" id="deviceTable">
+          <thead><tr><th>#</th><th>Hostname</th><th>IP address</th><th>MAC address</th><th>Link</th><th>Source</th><th>Client uptime</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- System + LAN + WiFi -->
+    <div class="panel-grid">
+      <div class="card panel">
+        <div class="panel-head"><h2>🖥️ System</h2></div>
+        <div class="table-wrap"><table class="kv" id="systemTable"></table></div>
+      </div>
+      <div class="card panel">
+        <div class="panel-head"><h2>🔌 LAN ports</h2></div>
+        <div class="table-wrap"><table class="kv" id="lanTable"></table></div>
+        <div class="panel-head sub"><h2>📶 Wireless SSIDs</h2></div>
+        <div id="ssidList" class="chip-list"></div>
+      </div>
+    </div>
+
+    <!-- Generic routers: show whatever the device exposes -->
+    <div class="card panel" id="genericPanel" hidden>
+      <div class="panel-head"><h2>🧩 Discovered router data</h2><span id="profilePill" class="pill">generic</span></div>
+      <div id="genericContent" class="generic-grid"></div>
+    </div>
+
+    <footer class="page-footer">Auto-refresh every 5 seconds · <span id="lastUpdate">–</span></footer>
+  </section>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

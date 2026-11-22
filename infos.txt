@@ -1,0 +1,107 @@
+======================================================================
+ GATEWAY / ONU INFORMATION REPORT
+======================================================================
+ Generated : 2026-11-21 23:42:12
+ Gateway   : http://192.168.1.1/
+======================================================================
+
+1. DEVICE IDENTIFICATION
+----------------------------------------------------------------------
+  Manufacturer       : FiberHome
+  Model              : HG6145F1  (HG6145F1)
+  Hardware Version   : WKE2.094.424A01
+  Software Version   : RP4423
+  Serial Number      : FHTTC128B689 (FHTTC128B689)
+  GPON SN (hex)      : 46485454C128B689
+  Manufacturer OUI   : 000AC2
+  Operator           : ALGERIA_TELECOM (code: INTL, area: Trunk)
+  Base MAC (br)      : BC:46:32:2E:AA:F8
+  TR-069 MAC         : BC:46:32:2E:AA:F9
+  WAN MAC            : BC:46:32:2E:AA:FB
+  OS / Kernel        : Linux (none) 4.19.183 armv7l GNU/Linux
+  Compile Time       : #1 SMP PREEMPT Mon Jun 9 16:32:55 CST 2025
+
+2. INTERNET / WAN  (public IP)
+----------------------------------------------------------------------
+  Connection name    : 1_INTERNET_R_VID_12
+  Connection type    : PPPoE_Routed  (PPPoE)
+  Status             : Connected
+  Public IP Address  : 41.96.14.231
+  ISP Gateway        : 41.96.0.1
+  DNS Servers        : 41.110.32.3,8.8.8.8
+  VLAN ID            : 12
+  PPPoE Username     : CWF42222761
+  MTU                : 1492
+  NAT                : Enabled
+  Connection uptime  : 1h 25m 8s  (5108 s)
+  Last error         : ERROR_NONE
+
+3. SYSTEM STATUS / UPTIME
+----------------------------------------------------------------------
+  System uptime      : 1h 25m 58s  (5158 s)
+  CPU usage          : 12%
+  Memory usage       : 33.81%  (total 524288 KB, free 347032 KB)
+  Flash usage        : 86%
+  LAN ports          : 4
+  USB ports          : 1   WiFi devices: 1   Voice ports: 1
+  Uplink mode        : dev.pon.1
+
+4. OPTICAL FIBER / PON (GPON)
+----------------------------------------------------------------------
+  PON mode           : GPON  (ponmode=1)
+  ONU ID             : 37
+  OLT vendor         : FHTT
+  PON registration   : state 5   LoID reg state: 0
+  Auth status        : 5    FEC status: 3
+  LoID               : fiberhome
+  Optical TX power   : 2.03 dBm    (transmit)
+  Optical RX power   : -19.17 dBm  (receive)
+  Transceiver temp   : 40.40 C
+  Laser bias current : 9.59 mA
+  Supply voltage     : 3.30 V
+  PON bytes sent     : 165474743
+  PON bytes received : 2002885819
+  PON packets sent   : 610764
+  PON packets recv   : 1813791
+
+5. LAN PORTS STATUS
+----------------------------------------------------------------------
+  LAN1          : Up
+  LAN2          : NoLink
+  LAN3          : NoLink
+  LAN4          : Up
+  LAN4 link state    : Up
+
+6. CONNECTED DEVICES  (7 total)
+----------------------------------------------------------------------
+  #  Hostname            IP Address       MAC Address        Type      Source  Uptime      
+  -----------------------------------------------------------------------------------------
+  1  A06-de-Roumaissa    192.168.1.2      E2:7E:FD:9C:50:5D  Ethernet  DHCP    1h 25m 10s  
+  2  <unknown>           192.168.1.133    28:D2:44:69:05:82  Ethernet  STATIC  0h 48m 36s  
+  3  DESKTOP-4GROAHO     192.168.1.9      B4:AE:2B:DC:D3:BB  2.4G      DHCP    0h 22m 58s  
+  4  <unknown>           192.168.1.5      08:DA:35:DF:D5:AE  Ethernet  STATIC  1h 24m 54s  
+  5  <unknown>           192.168.1.4      24:FB:65:22:D9:FD  Ethernet  STATIC  1h 17m 8s   
+  6  HONOR-90            192.168.1.6      FE:C1:4F:A4:B3:3C  2.4G      DHCP    1h 17m 9s   
+  7  DESKTOP-I97H0DD     192.168.1.8      E8:B0:C5:3B:6E:8D  2.4G      DHCP    1h 16m 21s  
+
+7. WIRELESS NETWORKS (SSIDs)
+----------------------------------------------------------------------
+  SSID1  : TAYEB wifi
+  SSID2  : fh_ssid2
+  SSID3  : fh_ssid3
+  SSID4  : fh_ssid4
+  SSID5  : TAYEB wifi_5G
+  SSID6  : fh_5G_ssid2
+  SSID7  : fh_5G_ssid3
+  SSID8  : fh_5G_ssid4
+
+8. IPv6 / USB DONGLE
+----------------------------------------------------------------------
+  IPv6 enabled       : 1   Link-local: fe80::1/64
+  IPv6 prefix mode   : WANDelegated   DHCPv6 server: 1
+  USB dongle 1    : inactive
+  USB dongle 2    : inactive
+
+======================================================================
+ End of report
+======================================================================

@@ -44,6 +44,9 @@ curl -fsSL https://raw.githubusercontent.com/git-nino/homerouter/main/install.sh
 
 Or, from a local checkout: `bash install.sh`.
 
+If `raw.githubusercontent.com` serves a stale copy after an update, use
+`https://github.com/git-nino/homerouter/raw/refs/heads/main/install.sh` instead.
+
 It detects **Termux** (Android) vs **Ubuntu/Debian**, updates/upgrades packages,
 creates `~/.venvs/gwmon`, installs dependencies, registers a service, and starts
 the app on port 7000. The project lands in `~/projects/homerouter` by default

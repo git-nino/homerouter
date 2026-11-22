@@ -229,8 +229,13 @@ EOF
 }
 
 if [ "$PLATFORM" = "termux" ]; then
-  SOURCE_DIR="${PREFIX}/etc/sv/${SERVICE}"
+  # termux-services 0.13+ stores service directories directly in $SVDIR
+  # (normally $PREFIX/var/service); older releases symlink from etc/sv.
+  SVDIR="${SVDIR:-${PREFIX}/var/service}"
+  export SVDIR
+  SOURCE_DIR="${SVDIR}/${SERVICE}"
   mkdir -p "${SOURCE_DIR}/log"
+  rm -f "${SOURCE_DIR}/down"
   cat > "${SOURCE_DIR}/run" <<EOF
 #!/data/data/com.termux/files/usr/bin/sh
 cd "${APP_DIR}"

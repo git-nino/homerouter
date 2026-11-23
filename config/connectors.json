@@ -1,0 +1,307 @@
+{
+  "schema_version": 1,
+  "connectors": [
+    {
+      "id": "fiberhome.hg6145f1",
+      "display_name": "FiberHome HG6145F1 (observed)",
+      "status": "observed",
+      "enabled": true,
+      "evidence": {
+        "source": "Phase 1 audit of real HTTP responses from one HG6145F1 gateway; sensitive values redacted.",
+        "verified": true,
+        "notes": [
+          "Endpoint and field names were observed on the physical device.",
+          "Status remains 'observed', not 'verified', because full profile compatibility still requires normalized-output comparison on that device.",
+          "No credential values, phone numbers, public IPs, or serial numbers are stored here."
+        ]
+      },
+      "identification": {
+        "confidence": "partial",
+        "rules": [
+          {
+            "id": "preauth-model-name",
+            "phase": "pre_auth",
+            "source": "device_name",
+            "field": "ModelName",
+            "operator": "equals",
+            "value": "HG6145F1",
+            "confidence": "partial",
+            "weight": 60,
+            "evidence": "get_device_name returned this ModelName on the observed gateway; a model string alone is not firmware-unique."
+          },
+          {
+            "id": "postauth-manufacturer",
+            "phase": "post_auth",
+            "source": "base_info",
+            "field": "Manufacturer",
+            "operator": "equals",
+            "value": "FiberHome",
+            "confidence": "partial",
+            "weight": 20,
+            "evidence": "Observed in get_base_info."
+          },
+          {
+            "id": "postauth-model-name",
+            "phase": "post_auth",
+            "source": "base_info",
+            "field": "ModelName",
+            "operator": "equals",
+            "value": "HG6145F1",
+            "confidence": "partial",
+            "weight": 60,
+            "evidence": "Observed in get_base_info."
+          }
+        ]
+      },
+      "auth": {
+        "credential_suggestion_key": "fiberhome_observed_defaults",
+        "flows": [
+          {
+            "id": "fiberhome-aes-login",
+            "type": "fiberhome_aes",
+            "order": 1,
+            "endpoints": {
+              "seed": "seed",
+              "login": "login"
+            },
+            "fields": {
+              "username": { "source": "user_input" },
+              "password": { "source": "user_input", "transform": "fiberhome_aes_challenge" },
+              "port": { "source": "literal", "value": 0 },
+              "sessionid": { "source": "seed.sessionid" }
+            },
+            "success": {
+              "field": "login_result",
+              "allowed": [0, 1]
+            },
+            "session": {
+              "id_field": "sessionid",
+              "store": true,
+              "cookie": false
+            }
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "seed",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_acs_random" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": false,
+          "description": "Returns acsRandom and sessionid used by the FiberHome AES challenge."
+        },
+        {
+          "id": "login",
+          "method": "POST",
+          "path": "/cgi-bin/ajax",
+          "body": {
+            "ajaxmethod": "do_login",
+            "username": { "source": "user_input" },
+            "loginpd": { "source": "derived.encrypted_password" },
+            "port": { "source": "literal", "value": 0 },
+            "sessionid": { "source": "state.sessionid" }
+          },
+          "format": "json",
+          "timeout_seconds": 8,
+          "auth": false,
+          "description": "Submits the encrypted password and returns login_result."
+        },
+        {
+          "id": "logout",
+          "method": "POST",
+          "path": "/cgi-bin/ajax",
+          "body": {
+            "ajaxmethod": "do_logout",
+            "sessionid": { "source": "state.sessionid" },
+            "username": { "source": "state.logout_role" }
+          },
+          "format": "json",
+          "timeout_seconds": 8,
+          "auth": true,
+          "description": "Explicit logout; role is derived from get_login_user."
+        },
+        {
+          "id": "base_info",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_base_info" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Device identity, system, and optical fields."
+        },
+        {
+          "id": "wan_info",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_allwan_info" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "WAN list and WiFi objects."
+        },
+        {
+          "id": "lan_status",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_lan_status" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Connected LAN/WiFi client list."
+        },
+        {
+          "id": "operator",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_operator" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Operator identity fields."
+        },
+        {
+          "id": "device_name",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_device_name" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": false,
+          "description": "Pre-auth model name used for identification."
+        },
+        {
+          "id": "dongle_info",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_dongle_info" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Attached USB dongle status."
+        },
+        {
+          "id": "ipv6_lan",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_ipv6_lan" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Observed IPv6 LAN payload."
+        },
+        {
+          "id": "login_user",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_login_user" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Current login role, used to form the logout request."
+        },
+        {
+          "id": "voice_status",
+          "method": "GET",
+          "path": "/cgi-bin/ajax",
+          "query": { "ajaxmethod": "get_voice_status" },
+          "format": "json",
+          "timeout_seconds": 6,
+          "auth": true,
+          "description": "Voice port, number, and registration status."
+        }
+      ],
+      "extraction": [
+        { "id": "identity-manufacturer", "metric": "device.manufacturer", "endpoint": "base_info", "method": "json_path", "expression": "$.Manufacturer", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "identity-model", "metric": "device.model", "endpoint": "base_info", "method": "json_path", "expression": "$.ModelName", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "identity-firmware", "metric": "device.firmware", "endpoint": "base_info", "method": "json_path", "expression": "$.SoftwareVersion", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "identity-hardware", "metric": "device.hardware", "endpoint": "base_info", "method": "json_path", "expression": "$.HardwareVersion", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "identity-serial", "metric": "device.serial", "endpoint": "base_info", "method": "json_path", "expression": "$.SerialNumber", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "identity-operator", "metric": "device.operator", "endpoint": "operator", "method": "json_path", "expression": "$.operator_name", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "identity-mac-base", "metric": "device.mac_base", "endpoint": "base_info", "method": "json_path", "expression": "$.brmac", "transforms": ["strip"], "value_type": "mac_address", "availability_on_missing": "unsupported" },
+        { "id": "wan-mac", "metric": "device.mac_wan", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].MACAddress", "transforms": ["strip"], "value_type": "mac_address", "availability_on_missing": "unsupported" },
+        { "id": "wan-name", "metric": "wan.connection_name", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].Name", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "wan-type", "metric": "wan.connection_type", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].ConnectionType", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "wan-status", "metric": "wan.status", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].ConnectionStatus", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "wan-public-ip", "metric": "wan.public_ip", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].ExternalIPAddress", "transforms": ["decode_point_encoded_ip"], "value_type": "ip_address", "availability_on_missing": "unavailable" },
+        { "id": "wan-gateway-ip", "metric": "wan.gateway_ip", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].RemoteIPAddress", "transforms": ["decode_point_encoded_ip"], "value_type": "ip_address", "availability_on_missing": "unavailable" },
+        { "id": "wan-dns", "metric": "wan.dns_servers", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].DNSServers", "transforms": ["decode_point_encoded_ip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "wan-vlan", "metric": "wan.vlan_id", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].vlanid", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "wan-pppoe-user", "metric": "wan.pppoe_user", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].Username", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "wan-mtu", "metric": "wan.mtu", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].mtu", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "wan-nat", "metric": "wan.nat", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].NATEnabled", "transforms": ["enabled_flag"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "wan-uptime", "metric": "wan.uptime_s", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].Uptime", "transforms": ["integer"], "value_type": "duration_seconds", "availability_on_missing": "unavailable" },
+        { "id": "wan-last-error", "metric": "wan.last_error", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].LastConnectionError", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "wan-mac-alt", "metric": "wan.mac", "endpoint": "wan_info", "method": "json_path", "expression": "$.wan[0].MACAddress", "transforms": ["strip"], "value_type": "mac_address", "availability_on_missing": "unsupported" },
+        { "id": "optical-tx", "metric": "optical.tx_power_dbm", "endpoint": "base_info", "method": "json_path", "expression": "$.txpower", "transforms": ["number"], "value_type": "dbm", "availability_on_missing": "unavailable" },
+        { "id": "optical-rx", "metric": "optical.rx_power_dbm", "endpoint": "base_info", "method": "json_path", "expression": "$.rxpower", "transforms": ["number"], "value_type": "dbm", "availability_on_missing": "unavailable" },
+        { "id": "optical-temperature", "metric": "optical.temperature_c", "endpoint": "base_info", "method": "json_path", "expression": "$.transceivertemperature", "transforms": ["number"], "value_type": "celsius", "availability_on_missing": "unsupported" },
+        { "id": "optical-current", "metric": "optical.bias_current_ma", "endpoint": "base_info", "method": "json_path", "expression": "$.biascurrent", "transforms": ["number"], "value_type": "milliamp", "availability_on_missing": "unsupported" },
+        { "id": "optical-voltage", "metric": "optical.supply_voltage_v", "endpoint": "base_info", "method": "json_path", "expression": "$.supplyvottage", "transforms": ["number"], "value_type": "volt", "availability_on_missing": "unsupported" },
+        { "id": "optical-mode", "metric": "optical.pon_mode", "endpoint": "base_info", "method": "json_path", "expression": "$.WANAccessType", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "optical-onu-id", "metric": "optical.onu_id", "endpoint": "base_info", "method": "json_path", "expression": "$.onu_id", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "optical-vendor", "metric": "optical.olt_vendor", "endpoint": "base_info", "method": "json_path", "expression": "$.vendor", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "optical-registration", "metric": "optical.registration_state", "endpoint": "base_info", "method": "json_path", "expression": "$.pon_reg_state", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "optical-auth", "metric": "optical.auth_status", "endpoint": "base_info", "method": "json_path", "expression": "$.authStatus", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "optical-loid", "metric": "optical.loid", "endpoint": "base_info", "method": "json_path", "expression": "$.loid_name", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "optical-bytes-sent", "metric": "optical.bytes_sent", "endpoint": "base_info", "method": "json_path", "expression": "$.ponBytesSent", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "optical-bytes-received", "metric": "optical.bytes_received", "endpoint": "base_info", "method": "json_path", "expression": "$.ponBytesReceived", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "optical-packets-sent", "metric": "optical.packets_sent", "endpoint": "base_info", "method": "json_path", "expression": "$.ponPacketsSent", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "optical-packets-received", "metric": "optical.packets_received", "endpoint": "base_info", "method": "json_path", "expression": "$.ponPacketsReceived", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "voip-number-uri", "metric": "voip.phone_number", "endpoint": "voice_status", "method": "json_path", "expression": "$.voice_status.URI1", "when": { "field": "voice_status.ServerType", "operator": "equals", "value": "2" }, "when_all": [{ "field": "voice_status.voice_port_num", "operator": "not_equals", "value": "0" }], "priority": 10, "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "voip-number-directory", "metric": "voip.phone_number", "endpoint": "voice_status", "method": "json_path", "expression": "$.voice_status.DirectoryNumber1", "when": { "field": "voice_status.ServerType", "operator": "not_equals", "value": "2" }, "when_all": [{ "field": "voice_status.voice_port_num", "operator": "not_equals", "value": "0" }], "priority": 20, "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "voip-number-auth", "metric": "voip.phone_number", "endpoint": "voice_status", "method": "json_path", "expression": "$.voice_status.AuthUserName1", "when": { "field": "voice_status.ServerType", "operator": "not_equals", "value": "2" }, "when_all": [{ "field": "voice_status.voice_port_num", "operator": "not_equals", "value": "0" }], "priority": 30, "transforms": ["strip", "split_before_at"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "voip-registration", "metric": "voip.registration_state", "endpoint": "voice_status", "method": "json_path", "expression": "$.voice_status.RegAndCallStatus1", "transforms": ["voip_status_label"], "value_type": "string", "availability_on_missing": "unavailable" },
+        { "id": "system-uptime", "metric": "system.uptime_s", "endpoint": "base_info", "method": "json_path", "expression": "$.uptime", "transforms": ["integer"], "value_type": "duration_seconds", "availability_on_missing": "unavailable" },
+        { "id": "system-cpu", "metric": "system.cpu_percent", "endpoint": "base_info", "method": "json_path", "expression": "$.cpu_usage", "transforms": ["number"], "value_type": "percent", "availability_on_missing": "unsupported" },
+        { "id": "system-flash", "metric": "system.flash_percent", "endpoint": "base_info", "method": "json_path", "expression": "$.flash_usage", "transforms": ["number"], "value_type": "percent", "availability_on_missing": "unsupported" },
+        { "id": "system-lan-ports", "metric": "system.lan_port_count", "endpoint": "base_info", "method": "json_path", "expression": "$.lan_port_num", "transforms": ["integer"], "value_type": "integer", "availability_on_missing": "unsupported" },
+        { "id": "system-uplink", "metric": "system.uplink_mode", "endpoint": "base_info", "method": "json_path", "expression": "$.uplink_mode", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "system-compile-time", "metric": "system.compile_time", "endpoint": "base_info", "method": "json_path", "expression": "$.compile_time", "transforms": ["strip"], "value_type": "string", "availability_on_missing": "unsupported" },
+        { "id": "devices-count", "metric": "devices.count", "endpoint": "lan_status", "method": "list_length", "expression": "$.lan_status.data", "value_type": "integer", "availability_on_missing": "unavailable" }
+      ],
+      "validation": [
+        { "metric": "device.manufacturer", "rule": "non_empty", "on_failure": "invalid" },
+        { "metric": "device.model", "rule": "non_empty", "on_failure": "invalid" },
+        { "metric": "device.mac_base", "rule": "mac", "on_failure": "invalid" },
+        { "metric": "device.mac_wan", "rule": "mac", "on_failure": "invalid" },
+        { "metric": "wan.public_ip", "rule": "ipv4", "on_failure": "invalid" },
+        { "metric": "wan.gateway_ip", "rule": "ipv4", "on_failure": "invalid" },
+        { "metric": "wan.mac", "rule": "mac", "on_failure": "invalid" },
+        { "metric": "wan.mtu", "rule": "number", "on_failure": "invalid" },
+        { "metric": "wan.uptime_s", "rule": "duration_seconds", "on_failure": "invalid" },
+        { "metric": "wan.nat", "rule": "one_of", "options": { "values": ["Enabled", "Disabled"] }, "on_failure": "invalid" },
+        { "metric": "optical.tx_power_dbm", "rule": "dbm_range", "options": { "min": -40, "max": 10 }, "on_failure": "invalid" },
+        { "metric": "optical.rx_power_dbm", "rule": "dbm_range", "options": { "min": -40, "max": 10 }, "on_failure": "invalid" },
+        { "metric": "voip.phone_number", "rule": "phone_e164", "on_failure": "invalid" },
+        { "metric": "voip.registration_state", "rule": "non_empty", "on_failure": "unavailable" },
+        { "metric": "system.uptime_s", "rule": "duration_seconds", "on_failure": "invalid" },
+        { "metric": "devices.count", "rule": "number", "on_failure": "invalid" }
+      ],
+      "dependencies": {
+        "login": ["seed"],
+        "logout": ["login", "login_user"],
+        "base_info": ["login"],
+        "wan_info": ["login"],
+        "lan_status": ["login"],
+        "operator": ["login"],
+        "dongle_info": ["login"],
+        "ipv6_lan": ["login"],
+        "login_user": ["login"],
+        "voice_status": ["login"]
+      },
+      "capabilities": [
+        "device_identity", "wan", "optical", "voip", "system", "connected_devices"
+      ],
+      "limitations": [
+        "Only fields observed on one HG6145F1 are described here.",
+        "Speed testing is local to the host and is not provided by this connector.",
+        "Wi-Fi SSIDs, LAN port states, IPv6 details, and dongle details are collected by the legacy path but not yet described as extraction rules.",
+        "Compatibility must be confirmed against the physical device before this profile replaces hardcoded logic."
+      ]
+    }
+  ]
+}

@@ -461,3 +461,79 @@ Optical RX, Devices, Model. CPU and memory tiles were removed because both
 values remain available in the System Information panel. The VoIP/Telephony
 card was moved directly after the summary tiles, before WAN/Optical and the
 remaining panels.
+
+---
+
+## 13. Phase 3 — connector catalog infrastructure
+
+Phase 3 added declarative infrastructure without changing live dashboard or
+authentication behavior.
+
+### 13.1 Files added
+
+- `config/connector.schema.json` — JSON Schema for connector identity, auth
+  flows, endpoints, extraction rules, validation rules, and dependencies. Its
+  enums are aligned with `models.enums` so a profile cannot invent new
+  availability states, domains, or value types.
+- `config/connectors.json` — one `fiberhome.hg6145f1` profile built only from
+  endpoints and fields observed in the Phase 1 audit and the current
+  `build_view()` mapping. No credential values, phone numbers, public IPs, or
+  serial numbers are stored.
+- `config/default_credentials.json` — provenance-only credential suggestions.
+  Every suggestion requires explicit user confirmation and contains no secret
+  values.
+- `connector_manager.py` — catalog loader, schema checker, semantic
+  cross-checks, identification scoring, and credential lookup.
+- `tools/connector_builder.py` — `create`, `validate`, and `list` commands,
+  runnable with `python -m tools.connector_builder`.
+
+### 13.2 Validation rules
+
+The validator runs in two layers:
+
+1. **Schema layer** — a small in-house JSON Schema interpreter validates
+   required fields, types, enums, patterns, numeric bounds, array limits, and
+   unknown properties. It avoids adding a Termux runtime dependency.
+2. **Semantic layer** — checks duplicate connector/endpoint/rule IDs, endpoint
+   references, unknown extraction methods, unknown metrics, missing
+   capabilities, unknown transforms, dependency cycles, secret literals,
+   credential-suggestion references, and conflicting exact identification
+   rules. An `exact` connector confidence with only partial rules is rejected;
+   ambiguous exact matches are downgraded to `partial` at identification time.
+
+### 13.3 Structural validity is not compatibility
+
+`python -m tools.connector_builder validate` prints two separate results:
+
+- `Structural validity: PASS/FAIL`
+- `Device compatibility: NOT EVALUATED`
+
+The second line is intentional. A JSON profile can describe evidence and
+extraction rules, but only a physical ONT comparison can prove compatibility.
+`ConnectorManager.compatibility()` returns identification context when observed
+responses are supplied and still requires a physical-device check.
+
+### 13.4 FiberHome profile scope
+
+The shipped profile requests only the observed AJAX methods:
+`get_acs_random`, `do_login`, `do_logout`, `get_base_info`, `get_allwan_info`,
+`get_lan_status`, `get_operator`, `get_device_name`, `get_dongle_info`,
+`get_ipv6_lan`, `get_login_user`, and `get_voice_status`. Extraction rules cover
+the normalized device, WAN, optical, VoIP, system, and connected-device metrics
+that have an observed source field. The three phone-number rules use `when`
+plus `when_all` to reproduce the router's own `ServerType` mapping and to require
+an observed non-zero `voice_port_num`; a stale number cannot be extracted when
+no voice port exists. Local speed testing is not attributed to the connector.
+Fields collected by the legacy path but not yet mapped to universal metrics are
+listed as limitations rather than invented rules.
+
+### 13.5 Verification
+
+- `python -m tools.connector_builder validate` reports one structurally valid
+  connector with zero errors and zero warnings.
+- `python -m tools.connector_builder list` shows the observed profile with
+  `partial` identification confidence and `NOT EVALUATED` compatibility.
+- The full suite has 69 passing tests, including new checks for duplicate IDs,
+  unknown extraction methods/metrics, exact-rule conflicts, dependency cycles,
+  secret-free catalogs, explicit credential confirmation, ambiguous
+  identification, and the Builder CLI.

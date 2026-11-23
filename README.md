@@ -88,6 +88,31 @@ work without a certificate. Opening the app via `http://<phone-ip>:7000` will
 show the dashboard, but PWA installation will not be offered — use `localhost`
 for that.
 
+## Connector catalog (Phase 3)
+
+Connector definitions live in `config/connectors.json`. They describe only
+endpoints, fields, and transformations observed on real devices. The catalog is
+validated by `connector_manager.py`, which deliberately reports two separate
+results: **structural validity** and **device compatibility**. A structurally
+valid profile is not a compatibility claim; physical-device comparison is still
+required.
+
+```bash
+# Inspect the catalog and its separate compatibility status
+python -m tools.connector_builder list
+python -m tools.connector_builder validate
+
+# Print a secret-free draft scaffold, or append one to a catalog file
+python -m tools.connector_builder create --id vendor.model --display-name "Vendor Model"
+python -m tools.connector_builder create --id vendor.model --display-name "Vendor Model" \
+  --output config/connectors.json
+```
+
+`config/default_credentials.json` contains safe *suggestions* and provenance
+only. It never stores credential values, and every suggestion requires explicit
+user confirmation. No network authentication happens automatically after
+discovery.
+
 ## Tests
 
 ```bash
@@ -99,7 +124,11 @@ python3 -m unittest discover -s tests -v
 - `app.py` — Flask server, API routes, speedtest worker
 - `gateway.py` — gateway detection, AES login, data collection
 - `models/` — universal normalized FTTH model (seven domains, explicit availability states, safe dialer actions)
-- `tests/` — unit tests for the model, phone validation, and future connectors
+- `connector_manager.py` — catalog loading, structural validation, identification scoring, and credential suggestions
+- `config/connectors.json`, `config/connector.schema.json` — observed connector profiles and their JSON schema
+- `config/default_credentials.json` — secret-free credential suggestions with provenance
+- `tools/connector_builder.py` — `create`, `validate`, and `list` CLI
+- `tests/` — unit tests for the model, phone validation, connectors, and UI
 - `templates/index.html`, `static/*` — responsive dashboard UI with the VoIP/Telephony card in the five-card order
 - `requirements.txt`, `requirements-termux.txt` — dependencies
 - `run.sh` — simple desktop launcher

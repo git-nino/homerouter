@@ -65,6 +65,7 @@ class UiPolishTests(unittest.TestCase):
         self.assertIn("border-radius: 50%", self.styles)
 
     def test_pwa_icons_are_generated_from_ont_source(self):
+        self.assertTrue((ROOT / "static" / "icon-ont.png").is_file())
         self.assertEqual(png_size(ROOT / "static" / "icon-192.png"), (192, 192))
         self.assertEqual(png_size(ROOT / "static" / "icon-512.png"), (512, 512))
         self.assertEqual(png_size(ROOT / "static" / "favicon.png"), (64, 64))

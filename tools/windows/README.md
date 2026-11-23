@@ -43,6 +43,7 @@ Python, Node, or any external package for capture/analysis/generation.
 | `-HarPath` | yes | Path to the HAR JSON file exported by Edge/Chrome. |
 | `-Gateway` | no | Manual target host override. Accepts an IP, DNS name, `host:port`, or URL. Used **only** as a strict URL filter. |
 | `-Hostname` | no | Separate UI host override (for example `router.local` or ` ont.local `). Overrides the host portion of `-Gateway` for filtering; the port from `-Gateway` is still honored. |
+| `-FirmwareFamily` | no | Optional reviewer-supplied firmware family used **only** in the connector id when firmware variants require separate profiles. |
 | `-OutputDirectory` | no | Output root. Defaults to `.\output` in the current working directory. |
 
 The script auto-detects the active IPv4 default route with `Get-NetRoute` and the
@@ -68,17 +69,18 @@ scan, port scan, brute force, or credential guessing.
 
 ## 3. What is produced
 
-For a deterministic connector id such as `har.ont-1a2b3c4d5e6f`, exactly these outputs
-are written under `-OutputDirectory`:
+For a deterministic connector id such as `fiberhome.hg6145f1` (or
+`observed.capture-<digest>` when identity is unknown), exactly these outputs are written
+under `-OutputDirectory`:
 
 ```text
-output/har.ont-1a2b3c4d5e6f.draft.json
-output/har.ont-1a2b3c4d5e6f.evidence/
+output/fiberhome.hg6145f1.draft.json
+output/fiberhome.hg6145f1.evidence/
     capture-summary.json
     redaction-report.json
     endpoints/
-        get-....json
-        post-....json
+        get_....json
+        post_....json
         ...
 ```
 
@@ -124,7 +126,21 @@ tool.
   Only existing supported handler types are emitted: `none`, `http_basic`,
   `http_digest`, `form`, `session`, `token`, `fiberhome_aes`.
 
-Endpoints are derived from **observed URL host + path + HTTP method** (GET/POST only).
+### Connector id policy
+
+The permanent connector id is derived only from non-sensitive device identity:
+
+- `manufacturer.model` when both are observed (for example `fiberhome.hg6145f1`)
+- `manufacturer.model.fw-<family>` only when a reviewer supplies `-FirmwareFamily`
+  because firmware variants require separate profiles
+- `observed.<model>-<digest>` (explicitly temporary) when identity is unknown
+
+The selected LAN IP, Windows IP, serial number, MAC address, hostname and other personal
+identifiers are **never** used in the id. The same model captured from two different LAN
+IPs therefore produces the same connector id.
+
+Endpoints are derived from **observed method + path** (GET/POST only), with a numeric
+suffix for repeated shapes. The selected host is used only as a strict HAR filter.
 Query parameters, body field names, and a small safe header allowlist are preserved as
 structure. Dynamic values seen to come from an earlier response are expressed with
 `{"source":"state","field":"<observed-field-name>"}` and recorded in `dependencies`.
@@ -133,11 +149,17 @@ Metric candidates use only existing universal metric IDs (for example
 `device.manufacturer`, `device.model`, `device.firmware`, `device.hardware`,
 `wan.status`, `wan.public_ip`, `optical.rx_power_dbm`, `optical.tx_power_dbm`,
 `optical.temperature_c`, `voip.phone_number`, `voip.registration_state`,
-`system.uptime_s`, `devices.count`). Extraction methods are limited to `json_path`,
-`json_path_multi`, `list_length`, `list_objects`, `keyed_objects`, `regex`, `header`,
-and `literal`. No `xpath` or `css` is emitted. Transforms are limited to the supported
-set (`strip`, `decode_point_encoded_ip`, `enabled_flag`, `integer`, `number`,
-`split_before_at`, `voip_status_label`, `used_percent`).
+`system.uptime_s`, `devices.count`). The PowerShell tool and
+`tools/har_analyzer.py` use the same conservative mapping table. Extraction rules carry
+only observed JSON paths (`method: "json_path"`) with no inferred units, `transforms`,
+`value_type` or invented `validation` rules. A field name alone is never treated as proof
+of a unit, encoding or transform; those belong in `manual_review`. No `xpath` or `css`
+rules are emitted.
+
+HTML and XML response bodies are **not mapped into extraction rules**. The runtime has no
+safe HTML extraction method and no XML extraction method, so the evidence records name
+the endpoint and any observed XML element names as `fields_not_analyzed`, with a note that
+manual extraction work is required. No fake mapping is created.
 
 ## 5. Mandatory sanitization
 
@@ -148,16 +170,19 @@ evidence file:
 - `Authorization`, `Cookie`, `Set-Cookie`, CSRF/XSRF, nonce, API-key, token and session
   headers/values
 - session IDs and challenge/seed values
-- phone numbers, public IPv4 addresses, serial numbers, GPON SN/LoID values
-- MAC addresses and personal hostnames/device names
+- phone numbers, public **and private/LAN** IPv4 addresses, serial numbers, GPON
+  SN/LoID values
+- MAC addresses, personal hostnames/device names and generic secret-looking tokens
+  hidden under unspecific field names
 
 Field names and nesting are preserved; values become placeholders such as
 `<redacted-password>`, `<redacted-session>`, `<redacted-token>`, `<redacted-nonce>`,
-`<redacted-phone>`, `<redacted-public-ip>`, `<redacted-serial>`, `<redacted-mac>`,
-`<redacted-hostname>`, and `<redacted-credential>`. Non-sensitive observed identifiers
-(model/manufacturer/firmware/hardware) may remain as values when they pass the safety
-checks. Before any file is written, the serialized JSON is re-checked for MAC addresses,
-public IPv4 addresses and long token-like strings; if any remain, that file is refused.
+`<redacted-phone>`, `<redacted-ip>`, `<redacted-public-ip>`, `<redacted-serial>`,
+`<redacted-mac>`, `<redacted-hostname>`, and `<redacted-credential>`. Non-sensitive
+observed identifiers (model/manufacturer/firmware/hardware) may remain as values when
+they pass the safety checks. Before any file is written, the serialized JSON is
+re-checked against every registered sensitive literal plus MAC/IPv4/long-token patterns;
+if any remain, that file is refused (fail closed).
 
 > Raw HARs may contain credentials and live session secrets. Store them outside shared
 > folders, do not attach them to tickets, and delete them when the draft has been
@@ -170,8 +195,8 @@ Capture and generation do **not** need Python. The repository's Python builder i
 for later validation and import into the catalog:
 
 ```bash
-python -m tools.connector_builder validate-draft output/har.ont-1a2b3c4d5e6f.draft.json
-python -m tools.connector_builder import-draft output/har.ont-1a2b3c4d5e6f.draft.json --approve
+python -m tools.connector_builder validate-draft output/fiberhome.hg6145f1.draft.json
+python -m tools.connector_builder import-draft output/fiberhome.hg6145f1.draft.json --approve
 ```
 
 Run these from the repository root after reviewing the draft, `manual_review`, and all

@@ -11,6 +11,7 @@ PS1_PATH = WINDOWS_DIR / "Capture-ONT.ps1"
 BAT_PATH = WINDOWS_DIR / "Capture-ONT.bat"
 README_PATH = WINDOWS_DIR / "README.md"
 DRAFT_FIXTURE = Path(__file__).parent / "fixtures" / "har" / "windows_draft_shape.json"
+CHECKLIST_FIXTURE = Path(__file__).parent / "fixtures" / "har" / "windows_checklist_13.json"
 
 
 class WindowsCaptureToolTests(unittest.TestCase):
@@ -20,6 +21,7 @@ class WindowsCaptureToolTests(unittest.TestCase):
         cls.bat = BAT_PATH.read_text(encoding="utf-8-sig")
         cls.readme = README_PATH.read_text(encoding="utf-8-sig")
         cls.draft = json.loads(DRAFT_FIXTURE.read_text(encoding="utf-8"))
+        cls.checklist = json.loads(CHECKLIST_FIXTURE.read_text(encoding="utf-8"))
 
     def test_required_files_present(self):
         for path in (PS1_PATH, BAT_PATH, README_PATH):
@@ -97,6 +99,12 @@ class WindowsCaptureToolTests(unittest.TestCase):
             "--approve",
             "not",
             "manual",
+            "FirmwareFamily",
+            "manufacturer.model",
+            "HTML",
+            "XML",
+            "private",
+            "fail closed",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.readme)
@@ -111,6 +119,27 @@ class WindowsCaptureToolTests(unittest.TestCase):
         self.assertIs(self.draft["enabled"], False)
         self.assertIs(self.draft["evidence"]["verified"], False)
         self.assertTrue(self.draft["source_har"])
+        self.assertRegex(self.draft["id"], r"^(observed\.[a-z0-9.-]+|[a-z0-9]+(?:\.[a-z0-9-]+)+)$")
+        self.assertNotRegex(self.draft["id"], r"\d{1,3}(?:\.\d{1,3}){3}")
+        for rule in self.draft.get("extraction", []):
+            self.assertEqual(rule.get("method"), "json_path")
+            self.assertNotIn("transforms", rule)
+            self.assertNotIn("value_type", rule)
+        self.assertEqual(self.draft.get("validation"), [])
+
+    def test_windows_13_point_checklist_was_executed(self):
+        self.assertTrue(self.checklist["executed_on_windows"])
+        self.assertEqual("Desktop", self.checklist["powershell_edition"])
+        self.assertTrue(self.checklist["powershell_version"].startswith("5.1."))
+        self.assertTrue(self.checklist["windows_version"].startswith("Microsoft Windows NT 10.0."))
+        checks = self.checklist["checklist"]
+        self.assertEqual(13, len(checks))
+        for name, result in checks.items():
+            with self.subTest(check=name):
+                if name in ("01_windows_version", "07_draft_status"):
+                    self.assertTrue(result)
+                else:
+                    self.assertIs(result, True)
 
 
 if __name__ == "__main__":

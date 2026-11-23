@@ -26,11 +26,16 @@ param(
     # portion of -Gateway for filtering, but not its port.
     [string] $Hostname,
 
+    # Optional manual override. Only used in the permanent connector id when
+    # firmware differences require separate profiles for the same model.
+    [string] $FirmwareFamily,
+
     [string] $OutputDirectory
 )
 
 $script:ToolVersion = '1.0.0'
 $script:RedactionCounts = @{}
+$script:SensitiveLiterals = [System.Collections.Generic.HashSet[string]]::new()
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path (Get-Location).Path 'output'
@@ -47,15 +52,22 @@ function Register-Redaction {
     $script:RedactionCounts[$key] += $Count
 }
 
+function Register-SensitiveLiteral {
+    param([string] $Value)
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value.Length -lt 3) { return }
+    if ($Value -like '<redacted-*') { return }
+    [void] $script:SensitiveLiterals.Add($Value)
+}
+
 function Get-Prop {
     param($Object, [string] $Name)
     if ($null -eq $Object -or [string]::IsNullOrEmpty($Name)) { return $null }
     if ($Object -is [System.Collections.IDictionary]) {
-        if ($Object.Contains($Name)) { return $Object[$Name] }
+        if ($Object.Contains($Name)) { return ,$Object[$Name] }
         return $null
     }
     $property = $Object.PSObject.Properties[$Name]
-    if ($null -ne $property) { return $property.Value }
+    if ($null -ne $property) { return ,$property.Value }
     return $null
 }
 
@@ -87,21 +99,67 @@ function Get-StableHash {
 function New-Slug {
     param([string] $Text)
     if ([string]::IsNullOrWhiteSpace($Text)) { return 'item' }
-    $slug = $Text -replace '[^A-Za-z0-9]+', '-'
-    $slug = $slug.ToLowerInvariant().Trim('-')
+    $slug = ([string] $Text).ToLowerInvariant() -replace '[^a-z0-9]+', '_'
+    $slug = $slug.Trim('_')
+    if ($slug.Length -gt 48) { $slug = $slug.Substring(0, 48).Trim('_') }
     if ([string]::IsNullOrWhiteSpace($slug)) { return 'item' }
     return $slug
 }
 
+function New-IdPart {
+    param([string] $Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { return '' }
+    $part = ([string] $Value).ToLowerInvariant() -replace '[^a-z0-9]', ''
+    return $part
+}
+
+function New-ConnectorId {
+    param(
+        [string] $Manufacturer,
+        [string] $Model,
+        [string] $FirmwareFamily,
+        [object[]] $Candidates,
+        [object[]] $FieldRecords
+    )
+
+    $manufacturerPart = New-IdPart -Value $Manufacturer
+    $modelPart = New-IdPart -Value $Model
+    $firmwarePart = New-IdPart -Value $FirmwareFamily
+
+    # Permanent ids are based only on observed identity (never on IP, host,
+    # serial, MAC or any other device-specific value).
+    if ($manufacturerPart -and $modelPart) {
+        $id = $manufacturerPart + '.' + $modelPart
+        if ($firmwarePart) { $id += '.fw-' + $firmwarePart }
+        return $id
+    }
+
+    # Unknown manufacturer/model gets an explicitly temporary observed.* id.
+    # The hash is derived from non-sensitive identity evidence and field paths,
+    # deliberately excluding the selected host and network information.
+    $signature = @()
+    foreach ($candidate in @($Candidates)) {
+        $metric = [string] (Get-Prop -Object $candidate -Name 'metric')
+        if ($metric -notin @('device.manufacturer', 'device.model', 'device.firmware', 'device.hardware', 'device.operator')) { continue }
+        $value = Get-Prop -Object $candidate -Name 'value'
+        if ($null -eq $value -or -not (Test-SafeIdentifierValue -Value $value)) { continue }
+        $signature += ([string] $metric) + '|' + ([string] (Get-Prop -Object $candidate -Name 'path')) + '|' + ([string] (Get-Prop -Object $candidate -Name 'field')) + '|' + ([string] $value)
+    }
+    if ($signature.Count -eq 0) {
+        foreach ($record in @($FieldRecords)) {
+            if ([string] (Get-Prop -Object $record -Name 'kind') -ne 'scalar') { continue }
+            $signature += ([string] (Get-Prop -Object $record -Name 'path')) + '|' + ([string] (Get-Prop -Object $record -Name 'name'))
+        }
+    }
+    $digest = Get-StableHash -Text (($signature | Sort-Object) -join '|') -Length 10
+    return 'observed.' + $(if ($modelPart) { $modelPart } else { 'capture' }) + '-' + $digest
+}
+
 function New-EndpointId {
-    param([string] $Method, [string] $Path, [string[]] $QueryNames)
-    $parts = @($Path -split '[^A-Za-z0-9]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $tail = @($parts | Select-Object -Last 4) -join '-'
-    if ([string]::IsNullOrWhiteSpace($tail)) { $tail = 'root' }
-    $slug = $tail.ToLowerInvariant() -replace '[^a-z0-9_-]', '-'
-    $slug = $slug.Trim('-')
-    $hash = Get-StableHash -Text ($Method.ToLowerInvariant() + '|' + $Path + '|' + (@($QueryNames) -join ',')) -Length 6
-    return ($Method.ToLowerInvariant() + '-' + $slug + '-' + $hash)
+    # Endpoint ids match the Python reference analyzer: <method>_<path-slug>,
+    # with _02, _03, ... added by the caller for repeated shapes.
+    param([string] $Method, [string] $Path)
+    return ((New-Slug -Text $Method) + '_' + (New-Slug -Text $Path))
 }
 
 function Ensure-Directory {
@@ -135,6 +193,7 @@ function Get-NamePlaceholder {
     if ($n -match '(serial|gponsn|^sn$|serialnumber)') { return '<redacted-serial>' }
     if ($n -match '(^mac$|macaddr|macaddress|hwaddr|brmac)') { return '<redacted-mac>' }
     if ($n -match '(phone|telephone|msisdn|mobile|directorynumber|^tel$|^uri[0-9]*$)') { return '<redacted-phone>' }
+    if ($n -match '(hostname|host_name|devicename|device_name|computername|friendlyname)') { return '<redacted-hostname>' }
     if ($n -match '(username|user|account|pppoe|loginname|authusername|user_name)') { return '<redacted-credential>' }
     return $null
 }
@@ -168,6 +227,7 @@ function Invoke-RedactText {
     $namePlaceholder = Get-NamePlaceholder -Name $FieldName
     if ($null -ne $namePlaceholder) {
         Register-Redaction -Placeholder $namePlaceholder
+        Register-SensitiveLiteral -Value $s
         return $namePlaceholder
     }
 
@@ -175,6 +235,7 @@ function Invoke-RedactText {
     $macMatches = [regex]::Matches($s, $macPattern)
     if ($macMatches.Count -gt 0) {
         Register-Redaction -Placeholder '<redacted-mac>' -Count $macMatches.Count
+        foreach ($match in $macMatches) { Register-SensitiveLiteral -Value $match.Value }
         $s = [regex]::Replace($s, $macPattern, '<redacted-mac>')
     }
 
@@ -183,28 +244,31 @@ function Invoke-RedactText {
         $value = $match.Value
         $isPublic = $false
         try { $isPublic = -not (Test-PrivateIPv4 -Value $value) } catch { $isPublic = $false }
-        if ($isPublic) {
-            Register-Redaction -Placeholder '<redacted-public-ip>'
-            $s = $s.Replace($value, '<redacted-public-ip>')
-        }
+        $placeholder = if ($isPublic) { '<redacted-public-ip>' } else { '<redacted-ip>' }
+        Register-Redaction -Placeholder $placeholder
+        Register-SensitiveLiteral -Value $value
+        $s = $s.Replace($value, $placeholder)
     }
 
     $phonePattern = '(?<![\w.])(?:\+\d[\d\-\s().]{7,17}\d|\d{2,4}[-.\s]\d{3,4}[-.\s]\d{4})(?![\w.])'
     $phoneMatches = [regex]::Matches($s, $phonePattern)
     if ($phoneMatches.Count -gt 0) {
         Register-Redaction -Placeholder '<redacted-phone>' -Count $phoneMatches.Count
+        foreach ($match in $phoneMatches) { Register-SensitiveLiteral -Value $match.Value }
         $s = [regex]::Replace($s, $phonePattern, '<redacted-phone>')
     }
 
     $serialPattern = '(?<![A-Za-z0-9_])(?=[A-Za-z0-9]{12,24}\b)(?=[A-Za-z0-9_]*\d)(?=[A-Za-z0-9_]*[A-Za-z])[A-Za-z0-9]{12,24}(?![A-Za-z0-9_])'
     foreach ($match in @([regex]::Matches($s, $serialPattern))) {
         Register-Redaction -Placeholder '<redacted-serial>'
+        Register-SensitiveLiteral -Value $match.Value
         $s = $s.Replace($match.Value, '<redacted-serial>')
     }
 
-    $tokenPattern = '(?<![A-Za-z0-9_/+=_-])(?=[A-Za-z0-9+/=_-]{28,})(?=[A-Za-z0-9+/=_-]*[A-Z])(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]+(?![A-Za-z0-9_/+=_-])'
+    $tokenPattern = '(?<![A-Za-z0-9_/+=_-])(?=[A-Za-z0-9+/=_-]{20,})(?=[A-Za-z0-9+/=_-]*[A-Z])(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]+(?![A-Za-z0-9_/+=_-])'
     foreach ($match in @([regex]::Matches($s, $tokenPattern))) {
         Register-Redaction -Placeholder '<redacted-session>'
+        Register-SensitiveLiteral -Value $match.Value
         $s = $s.Replace($match.Value, '<redacted-session>')
     }
 
@@ -228,21 +292,18 @@ function Redact-Scalar {
 function Test-OutputSafety {
     param([string] $Text)
     if ([string]::IsNullOrEmpty($Text)) { return $true }
+    foreach ($literal in $script:SensitiveLiterals) {
+        if (-not [string]::IsNullOrWhiteSpace($literal) -and $Text.Contains($literal)) {
+            return $false
+        }
+    }
     $patterns = @(
         '(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b',
         '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])',
-        '(?<![A-Za-z0-9_/+=_-])(?=[A-Za-z0-9+/=_-]{28,})(?=[A-Za-z0-9+/=_-]*[A-Z])(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]+(?![A-Za-z0-9_/+=_-])'
+        '(?<![A-Za-z0-9_/+=_-])(?=[A-Za-z0-9+/=_-]{20,})(?=[A-Za-z0-9+/=_-]*[A-Z])(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]+(?![A-Za-z0-9_/+=_-])'
     )
     foreach ($pattern in $patterns) {
-        if ($pattern -eq '(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])') {
-            foreach ($match in @([regex]::Matches($Text, $pattern))) {
-                $isPublic = $false
-                try { $isPublic = -not (Test-PrivateIPv4 -Value $match.Value) } catch { $isPublic = $false }
-                if ($isPublic) { return $false }
-            }
-        } elseif ([regex]::IsMatch($Text, $pattern)) {
-            return $false
-        }
+        if ([regex]::IsMatch($Text, $pattern)) { return $false }
     }
     return $true
 }
@@ -348,7 +409,11 @@ function Collect-FieldPaths {
 
     foreach ($name in @(Get-PropNames -Object $Value)) {
         $nextPrefix = if ([string]::IsNullOrEmpty($Prefix)) { '$.' + $name } else { $Prefix + '.' + $name }
-        Collect-FieldPaths -Value (Get-Prop -Object $Value -Name $name) -Prefix $nextPrefix -FieldName ([string] $name) -Depth ($Depth + 1) -Results $Results
+        $child = Get-Prop -Object $Value -Name $name
+        if ($null -eq $child) { continue }
+        # Get-Prop preserves arrays with a leading comma, so the array shape is
+        # visible here without further wrapping.
+        Collect-FieldPaths -Value $child -Prefix $nextPrefix -FieldName ([string] $name) -Depth ($Depth + 1) -Results $Results
     }
 }
 
@@ -564,8 +629,8 @@ function Get-NetworkInfo {
 
 function Test-TargetMatch {
     param([Uri] $Uri, [string] $TargetHost, $TargetPort)
-    $host = $Uri.Host.ToLowerInvariant().TrimEnd('.')
-    if ($host -ne $TargetHost) { return $false }
+    $entryHost = $Uri.Host.ToLowerInvariant().TrimEnd('.')
+    if ($entryHost -ne $TargetHost) { return $false }
     if ($null -ne $TargetPort -and [int] $Uri.Port -ne [int] $TargetPort) { return $false }
     return $true
 }
@@ -781,6 +846,48 @@ function New-EndpointDefinition {
     return $definition
 }
 
+function Get-XmlFieldNames {
+    param([string] $Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return @() }
+    $names = [System.Collections.Generic.HashSet[string]]::new()
+    $reader = $null
+    try {
+        $settings = [System.Xml.XmlReaderSettings]::new()
+        $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+        $settings.XmlResolver = $null
+        $reader = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($Text), $settings)
+        $document = [System.Xml.XmlDocument]::new()
+        $document.XmlResolver = $null
+        $document.Load($reader)
+        foreach ($node in @($document.SelectNodes('//*'))) {
+            if ($null -ne $node.LocalName) { [void] $names.Add([string] $node.LocalName) }
+        }
+    } catch {
+        return @()
+    } finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+    }
+    return @($names | Sort-Object)
+}
+
+function Get-UnsupportedContentNote {
+    param($Wrapper)
+    $format = [string] $Wrapper.format
+    if ($format -eq 'json') { return $null }
+    if ($format -eq 'xml') {
+        return [ordered]@{
+            format                = 'xml'
+            fields_not_analyzed   = @(Get-XmlFieldNames -Text ([string] $Wrapper.response_text))
+            reason                = 'XML element names were observed for evidence, but the connector runtime has no XML extraction method. No extraction candidate was generated; manual extraction work is required.'
+        }
+    }
+    return [ordered]@{
+        format              = $format
+        fields_not_analyzed = @('<body>')
+        reason              = 'The runtime has no safe HTML extraction method. The response was not parsed into field paths and no extraction candidate was generated; manual extraction work is required.'
+    }
+}
+
 function New-EndpointEvidence {
     param($Group)
     $rep = Get-RepresentativeEntry -Group $Group
@@ -791,6 +898,7 @@ function New-EndpointEvidence {
         scheme                   = [string] $rep.url_info.scheme
         format                   = [string] $rep.format
         representative_status    = [int] (Get-Prop -Object $rep.response -Name 'status')
+        unsupported_content      = Get-UnsupportedContentNote -Wrapper $rep
         response_structure       = $null
         request_structure        = [ordered]@{
             query   = Build-SanitizedHeaders -Headers @()
@@ -801,7 +909,10 @@ function New-EndpointEvidence {
     if ($null -ne $rep.parsed) {
         $evidence['response_structure'] = Build-Structure -Value $rep.parsed
     } else {
-        $evidence['notes'] += 'No parseable response content was present in the HAR for this endpoint.'
+        $evidence['notes'] += 'No parseable JSON response content was present in the HAR for this endpoint.'
+        if ($null -ne $evidence['unsupported_content']) {
+            $evidence['notes'] += ([string] $evidence['unsupported_content'].reason)
+        }
     }
     $queryStructure = [ordered]@{}
     foreach ($name in @($rep.url_info.query.Keys)) {
@@ -820,138 +931,26 @@ function New-EndpointEvidence {
 # ---------------------------------------------------------------------------
 # Metric candidate mapping (existing universal metric IDs only)
 # ---------------------------------------------------------------------------
-function Get-MetricValueType {
-    param([string] $Metric)
-    $map = @{
-        'device.manufacturer' = 'string'
-        'device.model' = 'string'
-        'device.firmware' = 'string'
-        'device.hardware' = 'string'
-        'device.serial' = 'string'
-        'device.gpon_sn' = 'string'
-        'device.operator' = 'string'
-        'device.mac_base' = 'mac_address'
-        'device.mac_wan' = 'mac_address'
-        'wan.connection_name' = 'string'
-        'wan.connection_type' = 'string'
-        'wan.status' = 'string'
-        'wan.public_ip' = 'ip_address'
-        'wan.gateway_ip' = 'ip_address'
-        'wan.dns_servers' = 'string'
-        'wan.vlan_id' = 'string'
-        'wan.pppoe_user' = 'string'
-        'wan.mtu' = 'integer'
-        'wan.nat' = 'string'
-        'wan.uptime_s' = 'duration_seconds'
-        'wan.last_error' = 'string'
-        'wan.mac' = 'mac_address'
-        'optical.tx_power_dbm' = 'dbm'
-        'optical.rx_power_dbm' = 'dbm'
-        'optical.temperature_c' = 'celsius'
-        'optical.bias_current_ma' = 'milliamp'
-        'optical.supply_voltage_v' = 'volt'
-        'optical.pon_mode' = 'string'
-        'optical.onu_id' = 'integer'
-        'optical.olt_vendor' = 'string'
-        'optical.registration_state' = 'string'
-        'optical.auth_status' = 'string'
-        'optical.loid' = 'string'
-        'optical.bytes_sent' = 'integer'
-        'optical.bytes_received' = 'integer'
-        'optical.packets_sent' = 'integer'
-        'optical.packets_received' = 'integer'
-        'voip.phone_number' = 'string'
-        'voip.registration_state' = 'string'
-        'voip.line_status' = 'string'
-        'voip.provider' = 'string'
-        'system.uptime_s' = 'duration_seconds'
-        'system.cpu_percent' = 'percent'
-        'system.memory_percent' = 'percent'
-        'system.flash_percent' = 'percent'
-        'system.lan_port_count' = 'integer'
-        'system.uplink_mode' = 'string'
-        'system.kernel' = 'string'
-        'system.compile_time' = 'string'
-        'devices.count' = 'integer'
-    }
-    if ($map.ContainsKey($Metric)) { return $map[$Metric] }
-    return $null
-}
-
-function Get-MetricTransforms {
-    param([string] $Metric, [string] $FieldName)
-    $transforms = @()
-    if ($Metric -match '^(device\.|wan\.(connection_name|connection_type|status|dns_servers|vlan_id|last_error)|optical\.(pon_mode|olt_vendor|registration_state|auth_status|loid)|system\.(uplink_mode|kernel|compile_time)|voip\.(phone_number|registration_state|line_status|provider))') {
-        $transforms += 'strip'
-    }
-    if ($Metric -eq 'wan.nat' -or $FieldName -match '(enabled|enable|flag)') { $transforms += 'enabled_flag' }
-    if ($Metric -match '(uptime_s|onu_id|_bytes_|_packets_|lan_port_count|^wan\.mtu$|^devices\.count$)') { $transforms += 'integer' }
-    if ($Metric -match '(_dbm$|_c$|bias_current|supply_voltage|cpu_percent|flash_percent)') { $transforms += 'number' }
-    if ($Metric -eq 'voip.registration_state') { $transforms += 'voip_status_label' }
-    return @($transforms | Select-Object -Unique)
-}
-
 function Get-MappingTable {
+    # This is the same conservative mapping as tools/har_analyzer.py. Field
+    # names alone never establish units, transforms or a semantic equivalence.
     return @(
-        @{ name = '^(manufacturer|manufacturername)$'; path = $null; metric = 'device.manufacturer'; confidence = 'partial' }
-        @{ name = '^(modelname|model|devicemodel)$'; path = $null; metric = 'device.model'; confidence = 'partial' }
-        @{ name = '^(softwareversion|firmwareversion|firmware|swversion)$'; path = $null; metric = 'device.firmware'; confidence = 'partial' }
-        @{ name = '^(hardwareversion|hardware|hwversion)$'; path = $null; metric = 'device.hardware'; confidence = 'partial' }
-        @{ name = '^(serialnumber|gponsn|serialno)$'; path = $null; metric = 'device.serial'; confidence = 'unknown' }
-        @{ name = '^operatorname$|^operator_name$'; path = $null; metric = 'device.operator'; confidence = 'partial' }
-        @{ name = '^brmac$|^base.?mac$'; path = '(base|device|root)'; metric = 'device.mac_base'; confidence = 'partial' }
-        @{ name = '^macaddress$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.mac'; confidence = 'partial' }
-        @{ name = '^(name|connectionname)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.connection_name'; confidence = 'partial' }
-        @{ name = '^(connectiontype|conntype)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.connection_type'; confidence = 'partial' }
-        @{ name = '^(connectionstatus|linkstatus|wanstatus)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.status'; confidence = 'partial' }
-        @{ name = '^(externalipaddress|wanip|publicip|ipaddress)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.public_ip'; confidence = 'partial' }
-        @{ name = '^(remoteipaddress|gatewayip|defaultgateway)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.gateway_ip'; confidence = 'partial' }
-        @{ name = '^dns(servers?)?$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.dns_servers'; confidence = 'partial' }
-        @{ name = '^(vlanid|vlan)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.vlan_id'; confidence = 'partial' }
-        @{ name = '^(username|pppoeuser|pppouser)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.pppoe_user'; confidence = 'unknown' }
-        @{ name = '^mtu$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.mtu'; confidence = 'partial' }
-        @{ name = '^(natenabled|nat)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.nat'; confidence = 'partial' }
-        @{ name = '^(uptime|uptime_s|conntime)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.uptime_s'; confidence = 'partial' }
-        @{ name = '^(lastconnectionerror|last_error)$'; path = '(wan|internet|inet|pppoe|ipv4)'; metric = 'wan.last_error'; confidence = 'partial' }
-        @{ name = '^(rxpower|rx_power|rxpowerdbm|rx_power_dbm)$'; path = $null; metric = 'optical.rx_power_dbm'; confidence = 'partial' }
-        @{ name = '^(txpower|tx_power|txpowerdbm|tx_power_dbm)$'; path = $null; metric = 'optical.tx_power_dbm'; confidence = 'partial' }
-        @{ name = '^(transceivertemperature|temperature|opticaltemp)$'; path = $null; metric = 'optical.temperature_c'; confidence = 'partial' }
-        @{ name = '^biascurrent$'; path = $null; metric = 'optical.bias_current_ma'; confidence = 'partial' }
-        @{ name = '^supply(voltage|vottage)$'; path = $null; metric = 'optical.supply_voltage_v'; confidence = 'partial' }
-        @{ name = '^(wanaccesstype|ponmode)$'; path = $null; metric = 'optical.pon_mode'; confidence = 'partial' }
-        @{ name = '^onu_id$'; path = $null; metric = 'optical.onu_id'; confidence = 'partial' }
-        @{ name = '^vendor$'; path = '(optical|pon|gpon|olt|xfiber)'; metric = 'optical.olt_vendor'; confidence = 'partial' }
-        @{ name = '^(ponregstate|pon_reg_state|registrationstate)$'; path = '(optical|pon|gpon|base|info)'; metric = 'optical.registration_state'; confidence = 'partial' }
-        @{ name = '^authstatus$'; path = '(optical|pon|gpon|base|info)'; metric = 'optical.auth_status'; confidence = 'partial' }
-        @{ name = '^loid_name$'; path = $null; metric = 'optical.loid'; confidence = 'unknown' }
-        @{ name = '^ponbytessent$'; path = $null; metric = 'optical.bytes_sent'; confidence = 'partial' }
-        @{ name = '^ponbytesreceived$'; path = $null; metric = 'optical.bytes_received'; confidence = 'partial' }
-        @{ name = '^ponpacketssent$'; path = $null; metric = 'optical.packets_sent'; confidence = 'partial' }
-        @{ name = '^ponpacketsreceived$'; path = $null; metric = 'optical.packets_received'; confidence = 'partial' }
-        @{ name = '^(uri1|directorynumber1|authusername1|phonenumber|msisdn)$'; path = '(voice|voip|sip|phone|tel)'; metric = 'voip.phone_number'; confidence = 'unknown' }
-        @{ name = '^(regandcallstatus1|regstatus|voipregistrationstate)$'; path = '(voice|voip|sip|phone|tel)'; metric = 'voip.registration_state'; confidence = 'partial' }
-        @{ name = '^linestatus$'; path = '(voice|voip|sip|phone|tel)'; metric = 'voip.line_status'; confidence = 'partial' }
-        @{ name = '^provider$'; path = '(voice|voip|sip|phone|tel)'; metric = 'voip.provider'; confidence = 'partial' }
-        @{ name = '^uptime$'; path = '^(?!.*wan)'; metric = 'system.uptime_s'; confidence = 'partial' }
-        @{ name = '^(cpuusage|cpu_usage)$'; path = $null; metric = 'system.cpu_percent'; confidence = 'partial' }
-        @{ name = '^flash(usage|usage_percent)?$'; path = $null; metric = 'system.flash_percent'; confidence = 'partial' }
-        @{ name = '^lan_port_num$'; path = $null; metric = 'system.lan_port_count'; confidence = 'partial' }
-        @{ name = '^uplink_mode$'; path = $null; metric = 'system.uplink_mode'; confidence = 'partial' }
-        @{ name = '^os_version$'; path = $null; metric = 'system.kernel'; confidence = 'partial' }
-        @{ name = '^compile_time$'; path = $null; metric = 'system.compile_time'; confidence = 'partial' }
-        @{ name = '^vendor$'; path = '(base|device|info|system)'; metric = 'device.manufacturer'; confidence = 'unknown' }
-        @{ name = '^version$'; path = '(base|device|info|system)'; metric = 'device.firmware'; confidence = 'unknown' }
-        @{ name = '^status$|^state$'; path = '(speed|speedtest)'; metric = 'speed_test.status'; confidence = 'partial' }
-        @{ name = '^download(mbps)?$'; path = '(speed|speedtest)'; metric = 'speed_test.download_mbps'; confidence = 'partial' }
-        @{ name = '^upload(mbps)?$'; path = '(speed|speedtest)'; metric = 'speed_test.upload_mbps'; confidence = 'partial' }
-        @{ name = '^ping(ms)?$'; path = '(speed|speedtest)'; metric = 'speed_test.ping_ms'; confidence = 'partial' }
-        @{ name = '^jitter(ms)?$'; path = '(speed|speedtest)'; metric = 'speed_test.jitter_ms'; confidence = 'partial' }
-        @{ name = '^server$'; path = '(speed|speedtest)'; metric = 'speed_test.server'; confidence = 'unknown' }
-        @{ name = '^sponsor$'; path = '(speed|speedtest)'; metric = 'speed_test.sponsor'; confidence = 'unknown' }
-        @{ name = '^country$'; path = '(speed|speedtest)'; metric = 'speed_test.country'; confidence = 'unknown' }
-        @{ name = '^error$|^error_msg$'; path = '(speed|speedtest)'; metric = 'speed_test.error'; confidence = 'partial' }
-        @{ name = '^(started_at|starttime)$'; path = '(speed|speedtest)'; metric = 'speed_test.started_at'; confidence = 'partial' }
-        @{ name = '^(completed_at|endtime)$'; path = '(speed|speedtest)'; metric = 'speed_test.completed_at'; confidence = 'partial' }
+        @{ name = '(manufacturer|vendor|make)'; path = $null; metric = 'device.manufacturer'; confidence = 'partial' }
+        @{ name = '(model|productname|devicemodel)'; path = $null; metric = 'device.model'; confidence = 'partial' }
+        @{ name = '(firmware|softwareversion|version)'; path = $null; metric = 'device.firmware'; confidence = 'partial' }
+        @{ name = '(hardware|hwversion|hwver)'; path = $null; metric = 'device.hardware'; confidence = 'partial' }
+        @{ name = '(wanstatus|linkstatus|connectionstatus|wanstate)'; path = $null; metric = 'wan.status'; confidence = 'partial' }
+        @{ name = '(wanip|publicip|internetip|wanaddr)'; path = $null; metric = 'wan.public_ip'; confidence = 'partial' }
+        @{ name = '(wanuptime|connectionuptime|uptime)'; path = $null; metric = 'wan.uptime_s'; confidence = 'partial' }
+        @{ name = '(rxpower|rxpowerdbm|receivepower)'; path = $null; metric = 'optical.rx_power_dbm'; confidence = 'partial' }
+        @{ name = '(txpower|txpowerdbm|transmitpower)'; path = $null; metric = 'optical.tx_power_dbm'; confidence = 'partial' }
+        @{ name = '(temperature|opticaltemp|tempc)'; path = $null; metric = 'optical.temperature_c'; confidence = 'partial' }
+        @{ name = '(phonenumber|telnumber|sipuser|voipnumber)'; path = $null; metric = 'voip.phone_number'; confidence = 'partial' }
+        @{ name = '(registration|regstate|voipstatus)'; path = $null; metric = 'voip.registration_state'; confidence = 'partial' }
+        @{ name = '(uptime)'; path = $null; metric = 'system.uptime_s'; confidence = 'partial' }
+        @{ name = '(cpuusage|cpupercent|cpu)'; path = $null; metric = 'system.cpu_percent'; confidence = 'partial' }
+        @{ name = '(memoryused|memorypercent|memory)'; path = $null; metric = 'system.memory_percent'; confidence = 'partial' }
+        @{ name = '(clients|devices|stations|lanhosts|clientlist)'; path = $null; metric = 'devices.count'; confidence = 'partial' }
     )
 }
 
@@ -964,11 +963,16 @@ function New-ExtractionArtifacts {
     $usedRuleIds = @{}
 
     foreach ($record in $FieldPathRecords) {
-        if ($record.kind -ne 'scalar') { continue }
+        if ($record.kind -notin @('scalar', 'array')) { continue }
         $name = [string] $record.name
         $path = [string] $record.path
         $endpoint = [string] $record.endpoint
         if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($path)) { continue }
+        # A redacted value must never become a metric mapping candidate.
+        if ($record.kind -eq 'scalar') {
+            $safeValue = Invoke-RedactText -Text ([string] $record.value) -FieldName $name
+            if ($safeValue -like '<redacted-*' -or $safeValue -ne [string] $record.value) { continue }
+        }
         foreach ($entry in $mapping) {
             if ($name -notmatch $entry.name) { continue }
             if ($null -ne $entry.path -and $path -notmatch $entry.path) { continue }
@@ -976,10 +980,12 @@ function New-ExtractionArtifacts {
             $key = $endpoint + '|' + $metric + '|' + $path
             if ($seen.ContainsKey($key)) { break }
             $seen[$key] = $true
-            $ruleId = 'extract-' + (New-Slug $metric) + '-' + (New-Slug $endpoint) + '-' + (Get-StableHash $key 5)
+            $signature = $metric + '|' + $endpoint + '|' + $path
+            $ruleId = 'extract-' + (New-Slug $metric) + '-' + (New-Slug $endpoint) + '-' + (Get-StableHash -Text $signature -Length 6)
             if ($usedRuleIds.ContainsKey($ruleId)) { continue }
             $usedRuleIds[$ruleId] = $true
-            $transforms = @(Get-MetricTransforms -Metric $metric -FieldName $name)
+            # Deliberately no transforms or value_type: a field name alone does
+            # not prove units or encoding. A reviewer must confirm those.
             $rule = [ordered]@{
                 id                      = $ruleId
                 metric                  = $metric
@@ -988,9 +994,6 @@ function New-ExtractionArtifacts {
                 expression              = $path
                 availability_on_missing = 'unavailable'
             }
-            if ($transforms.Count -gt 0) { $rule['transforms'] = @($transforms) }
-            $valueType = Get-MetricValueType -Metric $metric
-            if ($null -ne $valueType) { $rule['value_type'] = $valueType }
             $rules.Add($rule)
             $candidates.Add([ordered]@{
                 metric         = $metric
@@ -1023,18 +1026,9 @@ function New-ExtractionArtifacts {
             $expression = ([string] $total[0].path) + ',' + ([string] $free[0].path)
             $ruleId = 'extract-system-memory-' + (New-Slug $endpoint) + '-' + (Get-StableHash $expression 5)
             if (-not $usedRuleIds.ContainsKey($ruleId)) {
+                # No extraction rule: combining totals into a percentage is a
+                # transform that must be confirmed by a reviewer.
                 $usedRuleIds[$ruleId] = $true
-                $rule = [ordered]@{
-                    id                      = $ruleId
-                    metric                  = 'system.memory_percent'
-                    endpoint                = $endpoint
-                    method                  = 'json_path_multi'
-                    expression              = $expression
-                    transforms              = @('used_percent')
-                    value_type              = 'percent'
-                    availability_on_missing = 'unavailable'
-                }
-                $rules.Add($rule)
                 $candidates.Add([ordered]@{
                     metric        = 'system.memory_percent'
                     endpoint      = $endpoint
@@ -1045,83 +1039,6 @@ function New-ExtractionArtifacts {
                     confidence    = 'partial'
                     manual_review = $true
                     evidence      = 'Both total and free memory fields were observed; transform must be confirmed.'
-                })
-            }
-        }
-    }
-
-    # Connected-device lists.
-    foreach ($record in $FieldPathRecords) {
-        if ($record.kind -ne 'array') { continue }
-        $itemFields = @($record.item_fields)
-        $looksLikeDevices = @($itemFields | Where-Object { $_ -match '(mac|host|ipaddr|ipaddress|client|device)' }).Count -gt 0
-        if (-not $looksLikeDevices) { continue }
-        $endpoint = [string] $record.endpoint
-        $path = [string] $record.path
-        $baseId = 'devices-' + (New-Slug $endpoint) + '-' + (Get-StableHash $path 5)
-        $countId = 'count-' + $baseId
-        if (-not $usedRuleIds.ContainsKey($countId)) {
-            $usedRuleIds[$countId] = $true
-            $rules.Add([ordered]@{
-                id                      = $countId
-                metric                  = 'devices.count'
-                endpoint                = $endpoint
-                method                  = 'list_length'
-                expression              = $path
-                availability_on_missing = 'unavailable'
-            })
-            $candidates.Add([ordered]@{
-                metric        = 'devices.count'
-                endpoint      = $endpoint
-                field         = [string] $record.name
-                path          = $path
-                method        = 'list_length'
-                expression    = $path
-                confidence    = 'partial'
-                manual_review = $true
-                evidence      = 'Observed array with device-like item fields; confirm it is the connected-device list.'
-            })
-        }
-        $mappedFields = [ordered]@{}
-        $targets = [ordered]@{
-            id           = '^(mac|macaddress|hwaddr|clientid)$'
-            hostname     = '^(hostname|host|name|devicename)$'
-            ip_address   = '^(ipaddress|ipaddr|ip|pointencodedip)$'
-            mac_address  = '^(mac|macaddress|hwaddr)$'
-            link_type    = '^(accesstype|interfacetype|linktype)$'
-            uptime_s     = '^(clientuptime|uptime|lease_time)$'
-        }
-        foreach ($target in @($targets.Keys)) {
-            $source = @($itemFields | Where-Object { $_ -match $targets[$target] } | Select-Object -First 1)
-            if ($source.Count -eq 0) { continue }
-            $field = [string] $source[0]
-            $itemSpec = [ordered]@{ field = $field; target = $target; transforms = @('strip') }
-            if ($target -eq 'ip_address' -and $field -match '(point|encoded)') { $itemSpec['transforms'] = @('decode_point_encoded_ip') }
-            if ($target -eq 'uptime_s') { $itemSpec['transforms'] = @('integer') }
-            $mappedFields[$target] = $itemSpec
-        }
-        if ($mappedFields.Count -gt 0) {
-            $listId = 'list-' + $baseId
-            if (-not $usedRuleIds.ContainsKey($listId)) {
-                $usedRuleIds[$listId] = $true
-                $rules.Add([ordered]@{
-                    id                      = $listId
-                    collection              = 'devices'
-                    endpoint                = $endpoint
-                    method                  = 'list_objects'
-                    expression              = $path
-                    item_fields             = $mappedFields
-                    availability_on_missing = 'unavailable'
-                })
-                $candidates.Add([ordered]@{
-                    endpoint      = $endpoint
-                    field         = [string] $record.name
-                    path          = $path
-                    method        = 'list_objects'
-                    expression    = $path
-                    confidence    = 'partial'
-                    manual_review = $true
-                    evidence      = 'Observed item fields mapped to connected-device targets; verify semantics.'
                 })
             }
         }
@@ -1341,7 +1258,7 @@ function New-AuthAnalysis {
 
     # This shape must match the existing connector schema's authObservations definition.
     $observations = [ordered]@{
-        classification    = $flowType
+        classification    = if ($requiresManual) { 'proprietary_challenge_response' } else { $flowType }
         proposed_handler  = if ($requiresManual) { 'manual_handler_required' } else { $flowType }
         sequence          = @($sequenceNotes)
         dynamic_values    = @($dynamicNames)
@@ -1471,6 +1388,7 @@ foreach ($wrapper in $sorted) {
     $wrapper['body_obj'] = $post.object
     $wrapper['body_kind'] = [string] $post.kind
     $wrapper['parsed'] = $parsed
+    $wrapper['response_text'] = $text
     $wrapper['text_length'] = if ($null -eq $text) { 0 } else { $text.Length }
     $wrapper['format'] = Get-ResponseFormat -Mime $mime -Parsed $parsed
     $wrapper['field_paths'] = @($paths)
@@ -1483,11 +1401,17 @@ $groups = [ordered]@{}
 $usedEndpointIds = @{}
 foreach ($wrapper in $sorted) {
     $path = [string] $wrapper.url_info.path
-    $key = [string] $wrapper.method + '|' + $path
+    $queryKey = @($wrapper.url_info.query.Keys | Sort-Object | ForEach-Object {
+        ([string] $_) + '=' + ([string] $wrapper.url_info.query[$_])
+    }) -join '&'
+    $key = [string] $wrapper.method + '|' + $path + '|' + $queryKey
     if (-not $groups.Contains($key)) {
-        $endpointId = New-EndpointId -Method ([string] $wrapper.method) -Path $path -QueryNames @($wrapper.url_info.query_names)
+        $baseEndpointId = New-EndpointId -Method ([string] $wrapper.method) -Path $path
+        $endpointId = $baseEndpointId
+        $suffix = 2
         while ($usedEndpointIds.ContainsKey($endpointId)) {
-            $endpointId = $endpointId + '-' + (Get-StableHash -Text $endpointId -Length 3)
+            $endpointId = $baseEndpointId + '_' + ('{0:d2}' -f $suffix)
+            $suffix++
         }
         $usedEndpointIds[$endpointId] = $true
         $groups[$key] = [ordered]@{
@@ -1549,20 +1473,29 @@ $allFieldNames += @($sorted | ForEach-Object { @(Get-PropNames -Object $_.body_o
 $authAnalysis = New-AuthAnalysis -AllSignals $allSignals -AllFieldNames $allFieldNames -Sequence $sequence -LoginEndpointIds $loginEndpointIds -SeedEndpointIds $seedEndpointIds -Wrappers $sorted
 $identification = New-IdentificationArtifacts -FieldPathRecords $fieldRecords -EndpointAuth $endpointAuth
 $extractionArtifacts = New-ExtractionArtifacts -FieldPathRecords $fieldRecords
-$validation = @(New-ValidationRules -ExtractionRules $extractionArtifacts.rules)
+# No validation rules are invented from field names; units and encodings must
+# be confirmed by a reviewer. This matches the Python reference analyzer.
+$validation = @()
 $capabilities = @(Get-Capabilities -ExtractionRules $extractionArtifacts.rules -FieldPathRecords $fieldRecords)
 
+$manufacturerValue = $null
 $modelValue = $null
+$firmwareValue = $null
 foreach ($candidate in $identification.candidates) {
-    if ($candidate.metric -eq 'device.model' -and (Test-SafeIdentifierValue -Value $candidate.value)) {
-        $modelValue = [string] $candidate.value
-        break
-    }
+    if (-not (Test-SafeIdentifierValue -Value $candidate.value)) { continue }
+    if ($candidate.metric -eq 'device.manufacturer' -and $null -eq $manufacturerValue) { $manufacturerValue = [string] $candidate.value }
+    if ($candidate.metric -eq 'device.model' -and $null -eq $modelValue) { $modelValue = [string] $candidate.value }
+    if ($candidate.metric -eq 'device.firmware' -and $null -eq $firmwareValue) { $firmwareValue = [string] $candidate.value }
 }
-$idSeed = $targetHost + '|' + $(if ($null -ne $modelValue) { $modelValue } else { 'unidentified' })
-$connectorId = 'har.ont-' + (Get-StableHash -Text $idSeed -Length 12)
-$displayModel = if ($null -ne $modelValue) { [regex]::Replace((Invoke-RedactText -Text $modelValue), '[^A-Za-z0-9 ._-]', '') } else { 'unidentified' }
-$displayName = 'HAR-derived ONT profile (' + $displayModel + ')'
+$connectorId = New-ConnectorId -Manufacturer $manufacturerValue -Model $modelValue -FirmwareFamily $FirmwareFamily -Candidates @($identification.candidates) -FieldRecords @($fieldRecords)
+$displayIdentity = if ($manufacturerValue -and $modelValue) {
+    [regex]::Replace((Invoke-RedactText -Text ($manufacturerValue + ' ' + $modelValue)), '[^A-Za-z0-9 ._-]', '')
+} elseif ($modelValue) {
+    [regex]::Replace((Invoke-RedactText -Text $modelValue), '[^A-Za-z0-9 ._-]', '')
+} else {
+    'unidentified'
+}
+$displayName = 'HAR-derived ONT profile (' + $displayIdentity + ')'
 $harLeaf = Split-Path -Path $resolvedHar -Leaf
 $safeHarName = 'har-' + (Get-StableHash -Text ([string] $harLeaf) -Length 10) + '.har'
 $targetForEvidence = '<selected-host>'
@@ -1601,6 +1534,7 @@ $limitations = @(
     'Draft was generated from a browser HAR only; no live probes, scans, or credential guesses were performed.',
     'Only requests to the explicitly selected host were analyzed; all other HAR traffic was ignored.',
     'Response values were sanitized, so field meanings and units must be confirmed on the real device.',
+    'No units, transforms or validation rules were inferred from field names; extraction rules carry only observed paths.',
     'The connector is disabled and must not be enabled until manual review is complete.',
     'Post-generation validation/import requires the repository Python builder; it is not needed to capture or generate this draft.'
 )
@@ -1670,7 +1604,7 @@ $draft = [ordered]@{
 $redactionReport = [ordered]@{
     generated_by          = 'Capture-ONT.ps1 v' + $script:ToolVersion
     source_har            = $safeHarName
-    warning               = 'Raw HAR content was never copied into the draft or evidence.',
+    warning               = 'Raw HAR content was never copied into the draft or evidence.'
     har_entries_total     = $entries.Count
     har_entries_selected  = $sorted.Count
     har_entries_ignored   = $ignoredCount

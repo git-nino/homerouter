@@ -22,6 +22,8 @@ SECRETS = [
     "token123456789",
     "csrf987654321",
     "203.0.113.7",
+    "192.168.1.1",
+    "192.168.1.50",
     "+15551234567",
     "aa:bb:cc:dd:ee:ff",
     "living-room-nas",
@@ -110,6 +112,61 @@ class HarParsingTests(unittest.TestCase):
             self.assertEqual(len(list((evidence / "endpoints").glob("*.json"))), 4)
 
 
+class UnsupportedContentTests(unittest.TestCase):
+    def _analysis(self, mime, text):
+        har = {
+            "log": {
+                "version": "1.2",
+                "entries": [{
+                    "startedDateTime": "2026-01-01T00:00:00Z",
+                    "request": {
+                        "method": "GET",
+                        "url": f"http://{GATEWAY}/status",
+                        "headers": [],
+                    },
+                    "response": {
+                        "status": 200,
+                        "content": {"mimeType": mime, "text": text},
+                    },
+                }],
+            }
+        }
+        return analyze_har(har, GATEWAY)
+
+    def test_xml_is_reported_without_fake_extraction(self):
+        analysis = self._analysis(
+            "application/xml",
+            "<Root><WAN><Status>up</Status></WAN></Root>",
+        )
+        self.assertEqual(analysis["draft"]["extraction"], [])
+        self.assertEqual(analysis["draft"]["metric_mapping_candidates"], [])
+        with tempfile.TemporaryDirectory() as directory:
+            paths = write_outputs(analysis, Path(directory))
+            record = json.loads(
+                (Path(paths["evidence"]) / "endpoints" / "get_status.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        note = record["unsupported_content"]
+        self.assertEqual(note["format"], "xml")
+        self.assertIn("WAN", note["fields_not_analyzed"])
+        self.assertIn("no XML extraction method", note["reason"])
+
+    def test_html_is_reported_without_fake_extraction(self):
+        analysis = self._analysis("text/html", "<html><body><table></table></body></html>")
+        self.assertEqual(analysis["draft"]["extraction"], [])
+        with tempfile.TemporaryDirectory() as directory:
+            paths = write_outputs(analysis, Path(directory))
+            record = json.loads(
+                (Path(paths["evidence"]) / "endpoints" / "get_status.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+        note = record["unsupported_content"]
+        self.assertEqual(note["format"], "html")
+        self.assertIn("no safe HTML extraction method", note["reason"])
+
+
 class AuthClassificationTests(unittest.TestCase):
     def _classification(self, *, headers=None, body=None, path="/status"):
         request = {
@@ -156,11 +213,11 @@ class AuthClassificationTests(unittest.TestCase):
             ),
             (
                 self._classification(headers={"Set-Cookie": "session=abc123"}),
-                "cookie_session", "session",
+                "session", "session",
             ),
             (
                 self._classification(path="/login", body={"username": "admin"}),
-                "html_form", "form",
+                "form", "form",
             ),
         ]
         for analysis, expected, handler in cases:
@@ -193,7 +250,7 @@ class DraftProfileTests(unittest.TestCase):
         self.assertIs(self.draft["enabled"], False)
         self.assertIs(self.draft["evidence"]["verified"], False)
         self.assertIn("HAR analysis", self.draft["evidence"]["source"])
-        self.assertEqual(self.draft["identification"]["confidence"], "unknown")
+        self.assertEqual(self.draft["identification"]["confidence"], "partial")
         self.assertTrue(self.draft["manual_review"])
         self.assertTrue(self.draft["limitations"])
         self.assertTrue(self.draft["auth_observations"]["sequence"])
@@ -203,6 +260,12 @@ class DraftProfileTests(unittest.TestCase):
             self.assertTrue(candidate["manual_review"])
             self.assertIn(candidate["path"], candidate["evidence"])
         self.assertIn("connected_devices", self.draft["capabilities"])
+        self.assertTrue(self.draft["extraction"])
+        for rule in self.draft["extraction"]:
+            self.assertEqual(rule["method"], "json_path")
+            self.assertNotIn("transforms", rule)
+            self.assertNotIn("value_type", rule)
+        self.assertEqual(self.draft["validation"], [])
 
     def test_draft_passes_project_validation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -237,6 +300,72 @@ class DraftProfileTests(unittest.TestCase):
             codes = [issue.code for issue in manager.validate().errors]
         self.assertIn("unsupported_scheme", codes)
         self.assertIn("unsupported_body_format", codes)
+
+
+class ConnectorIdPolicyTests(unittest.TestCase):
+    def _har_with_host(self, host):
+        return json.loads(FIXTURE.read_text(encoding="utf-8").replace("192.168.1.1", host))
+
+    def test_same_model_from_different_lan_ips_has_same_id(self):
+        first = analyze_har(self._har_with_host("192.168.1.1"), "192.168.1.1")
+        second = analyze_har(self._har_with_host("192.168.2.1"), "192.168.2.1")
+        self.assertEqual(first["draft"]["id"], second["draft"]["id"])
+        self.assertEqual(first["draft"]["id"], "syntheticvendor.syntheticmodelx1")
+        for text in (first["draft"]["id"], second["draft"]["id"]):
+            self.assertNotIn("192.168", text)
+
+    def test_firmware_family_is_opt_in(self):
+        base = analyze_har(FIXTURE, GATEWAY)
+        variant = analyze_har(FIXTURE, GATEWAY, firmware_family="V1.2")
+        self.assertEqual(base["draft"]["id"], "syntheticvendor.syntheticmodelx1")
+        self.assertEqual(variant["draft"]["id"], "syntheticvendor.syntheticmodelx1.fw-v12")
+
+    def test_unknown_identity_uses_temporary_observed_id(self):
+        har = {
+            "log": {
+                "version": "1.2",
+                "entries": [{
+                    "startedDateTime": "2026-01-01T00:00:00Z",
+                    "request": {
+                        "method": "GET",
+                        "url": "http://192.168.1.1/status",
+                        "headers": [],
+                    },
+                    "response": {
+                        "status": 200,
+                        "content": {
+                            "mimeType": "application/json",
+                            "text": "{\"Uptime\":\"1 day\"}",
+                        },
+                    },
+                }],
+            }
+        }
+        analysis = analyze_har(har, "192.168.1.1")
+        self.assertTrue(analysis["draft"]["id"].startswith("observed.capture-"))
+        self.assertNotIn("192.168.1.1", analysis["draft"]["id"])
+
+
+class RedactionHardeningTests(unittest.TestCase):
+    def test_private_ip_and_generic_token_are_redacted(self):
+        result = sanitize({
+            "LanAddress": "192.168.50.23",
+            "Opaque": "Abc123Def456Ghi789Jkl012Mno",
+            "PPPoEUser": "operator-secret",
+        })
+        self.assertEqual(result["LanAddress"], "<redacted-ip>")
+        self.assertEqual(result["Opaque"], "<redacted-token>")
+        self.assertEqual(result["PPPoEUser"], "<redacted-credential>")
+
+    def test_outputs_fail_closed_when_secret_remains(self):
+        analysis = analyze_har(FIXTURE, GATEWAY)
+        analysis["draft"] = copy.deepcopy(analysis["draft"])
+        analysis["draft"]["evidence"]["source"] = "leak SuperSecret123"
+        self.assertIn("SuperSecret123", analysis["sensitive_literals"])
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                write_outputs(analysis, Path(directory))
+            self.assertEqual(list(Path(directory).rglob("*")), [])
 
 
 class ImportTests(unittest.TestCase):

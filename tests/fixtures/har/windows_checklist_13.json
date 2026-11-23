@@ -1,0 +1,21 @@
+{
+  "executed_on_windows": true,
+  "windows_version": "Microsoft Windows NT 10.0.19045.0",
+  "powershell_version": "5.1.19041.6456",
+  "powershell_edition": "Desktop",
+  "checklist": {
+    "01_windows_version": "Microsoft Windows NT 10.0.19045.0",
+    "02_windows_powershell_51": true,
+    "03_bat_exit_zero": true,
+    "04_har_12_exit_zero": true,
+    "05_har_11_exit_zero": true,
+    "06_same_model_two_lan_ips_same_id": true,
+    "07_draft_status": "draft",
+    "08_draft_disabled": true,
+    "09_manual_auth_flag_false": true,
+    "10_extraction_conservative": true,
+    "11_validation_empty": true,
+    "12_no_sensitive_output_leaks": true,
+    "13_xml_html_explicit_unsupported": true
+  }
+}

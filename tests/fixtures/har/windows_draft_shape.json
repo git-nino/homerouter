@@ -1,145 +1,524 @@
 {
-  "id": "har.ont-abc123def456",
-  "display_name": "HAR-derived ONT profile (Synthetic Model X1)",
+  "id": "syntheticvendor.syntheticmodelx1",
+  "display_name": "SyntheticVendor SyntheticModel X1 (HAR capture, draft)",
   "status": "draft",
   "enabled": false,
+  "generated_by": "Capture-ONT.ps1 / tools.har_analyzer",
+  "source_har": "synthetic_ont_har",
+  "requires_manual_auth_handler": false,
   "evidence": {
-    "source": "Sanitized HAR analysis of traffic to <selected-host> (source file: har-abc123def4.har); selected host only, verified=false.",
+    "source": "Sanitized HAR analysis of <selected-host>; 4 matching request(s).",
     "verified": false,
     "notes": [
-      "Generated from HAR request/response structure, never from raw copied content.",
-      "Credentials, cookies, tokens, nonces, phone numbers, public IPs, serials, MACs and personal hostnames are redacted."
+      "Generated from observed browser traffic only; no endpoint or value was invented.",
+      "Raw HAR files were not copied into this profile or its evidence bundle."
     ]
   },
   "identification": {
     "confidence": "partial",
     "rules": [
       {
-        "id": "id-device_model-get-root-abc123",
+        "id": "observed-identifier",
         "phase": "pre_auth",
-        "source": "get-root",
-        "field": "ModelName",
+        "source": "get_cgi_bin_ajax",
+        "field": "Manufacturer",
         "operator": "equals",
-        "value": "Synthetic Model X1",
+        "value": "SyntheticVendor",
         "confidence": "partial",
-        "evidence": "Non-sensitive value observed in the selected-host HAR response; verify on the device."
+        "evidence": "Observed manufacturer-like response field $.Manufacturer; meaning not assumed."
       }
     ]
   },
   "auth": {
+    "credential_suggestion_key": "generic_user_supplied",
     "flows": [
       {
         "id": "observed-auth-flow",
         "type": "token",
         "order": 1,
-        "success": { "field": "login_result" },
-        "endpoints": { "login": "post-login" }
+        "success": {
+          "field": "<unobserved-success-field>"
+        },
+        "endpoints": {
+          "login": "post_cgi_bin_ajax"
+        }
       }
     ]
   },
   "endpoints": [
     {
-      "id": "get-root",
+      "id": "get_cgi_bin_ajax",
       "method": "GET",
-      "path": "/",
-      "format": "json",
-      "timeout_seconds": 6,
+      "path": "/cgi-bin/ajax",
       "scheme": "http",
+      "format": "json",
+      "timeout_seconds": 5,
       "auth": false,
-      "description": "Observed in HAR and sanitized; verify path, parameters and auth before enabling."
+      "description": "Observed HAR request 1: GET /cgi-bin/ajax.",
+      "query": {
+        "ajaxmethod": "get_device_name"
+      },
+      "headers": {
+        "Host": "<redacted-hostname>",
+        "User-Agent": "<redacted-hostname>",
+        "Accept": "application/json"
+      }
     },
     {
-      "id": "post-login",
+      "id": "post_cgi_bin_ajax",
       "method": "POST",
-      "path": "/login",
-      "format": "json",
-      "timeout_seconds": 6,
+      "path": "/cgi-bin/ajax",
       "scheme": "http",
+      "format": "json",
+      "timeout_seconds": 5,
       "auth": false,
+      "description": "Observed HAR request 2: POST /cgi-bin/ajax.",
+      "body_format": "form",
       "body": {
         "ajaxmethod": "do_login",
-        "password": { "source": "user_input", "field": "password" }
+        "username": "<redacted-credential>",
+        "password": "<redacted-password>",
+        "sessionid": "<redacted-session>"
       },
-      "body_format": "form",
-      "description": "Observed in HAR and sanitized; verify path, parameters and auth before enabling."
+      "headers": {
+        "Host": "<redacted-hostname>",
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    },
+    {
+      "id": "get_cgi_bin_ajax_02",
+      "method": "GET",
+      "path": "/cgi-bin/ajax",
+      "scheme": "http",
+      "format": "json",
+      "timeout_seconds": 5,
+      "auth": true,
+      "description": "Observed HAR request 3: GET /cgi-bin/ajax.",
+      "query": {
+        "ajaxmethod": "get_status"
+      },
+      "headers": {
+        "Host": "<redacted-hostname>",
+        "Authorization": "<redacted-auth>",
+        "X-CSRF-Token": "<redacted-token>"
+      }
+    },
+    {
+      "id": "get_web_style_css",
+      "method": "GET",
+      "path": "/web/style.css",
+      "scheme": "http",
+      "format": "text",
+      "timeout_seconds": 5,
+      "auth": false,
+      "description": "Observed HAR request 4: GET /web/style.css.",
+      "headers": {
+        "Host": "<redacted-hostname>"
+      }
     }
   ],
   "extraction": [
     {
-      "id": "extract-device_model-get-root-abc12",
+      "id": "extract-device_manufacturer-get_cgi_bin_ajax-9e7bf9",
+      "metric": "device.manufacturer",
+      "endpoint": "get_cgi_bin_ajax",
+      "method": "json_path",
+      "expression": "$.Manufacturer",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-device_model-get_cgi_bin_ajax-4c45bd",
       "metric": "device.model",
-      "endpoint": "get-root",
+      "endpoint": "get_cgi_bin_ajax",
       "method": "json_path",
       "expression": "$.ModelName",
-      "transforms": ["strip"],
-      "value_type": "string",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-device_firmware-get_cgi_bin_ajax-e0e539",
+      "metric": "device.firmware",
+      "endpoint": "get_cgi_bin_ajax",
+      "method": "json_path",
+      "expression": "$.FirmwareVersion",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-wan_uptime_s-get_cgi_bin_ajax_02-eb7f11",
+      "metric": "wan.uptime_s",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.WAN.Uptime",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-optical_rx_power_dbm-get_cgi_bin_ajax_02-acd313",
+      "metric": "optical.rx_power_dbm",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.Optical.RxPower",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-optical_tx_power_dbm-get_cgi_bin_ajax_02-43d497",
+      "metric": "optical.tx_power_dbm",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.Optical.TxPower",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-optical_temperature_c-get_cgi_bin_ajax_02-56f2ed",
+      "metric": "optical.temperature_c",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.Optical.Temperature",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-voip_registration_state-get_cgi_bin_ajax_02-ec2664",
+      "metric": "voip.registration_state",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.VoIP.RegistrationState",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-system_cpu_percent-get_cgi_bin_ajax_02-15d6c6",
+      "metric": "system.cpu_percent",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.System.CpuUsage",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-system_memory_percent-get_cgi_bin_ajax_02-fe9636",
+      "metric": "system.memory_percent",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.System.MemoryUsed",
+      "availability_on_missing": "unavailable"
+    },
+    {
+      "id": "extract-devices_count-get_cgi_bin_ajax_02-d50833",
+      "metric": "devices.count",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "method": "json_path",
+      "expression": "$.Devices",
       "availability_on_missing": "unavailable"
     }
   ],
-  "validation": [
-    { "metric": "device.model", "rule": "non_empty", "on_failure": "unavailable" }
-  ],
+  "validation": [],
   "dependencies": {},
-  "capabilities": ["device_identity"],
-  "limitations": [
-    "Draft was generated from a browser HAR only; no live probes, scans, or credential guesses were performed.",
-    "The connector is disabled and must not be enabled until manual review is complete."
+  "capabilities": [
+    "connected_devices",
+    "device_identity",
+    "optical",
+    "system",
+    "voip",
+    "wan"
   ],
-  "generated_by": "Capture-ONT.ps1 v1.0.0 (Windows native, offline HAR analysis)",
-  "source_har": "har-abc123def4.har",
-  "requires_manual_auth_handler": false,
+  "limitations": [
+    "Draft profile is disabled and requires manual review before any live use.",
+    "Metric mappings are candidates inferred from field names and response paths, not proven semantics.",
+    "Authentication success criteria are placeholders until confirmed from the HAR."
+  ],
   "auth_observations": {
     "classification": "token",
     "proposed_handler": "token",
-    "sequence": ["POST /login (authentication)"],
-    "dynamic_values": ["token"],
-    "notes": [
-      "Authentication was classified from observed requests only; no credentials or secret values were retained.",
-      "No encryption algorithm or executable auth handler was inferred."
+    "sequence": [
+      "POST /cgi-bin/ajax (login-like)"
     ],
-    "evidence": "Observed across 2 selected request(s) to the selected host."
+    "dynamic_values": [
+      "sessionid"
+    ],
+    "notes": [
+      "Authentication classification is based only on captured headers, bodies and paths."
+    ],
+    "evidence": "Observed across 4 request(s) to the selected host."
   },
   "identification_candidates": [
     {
-      "metric": "device.model",
-      "endpoint": "get-root",
-      "field": "ModelName",
-      "path": "$.ModelName",
-      "value": "Synthetic Model X1",
+      "metric": "device.manufacturer",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "Manufacturer",
+      "path": "$.Manufacturer",
+      "value": "SyntheticVendor",
       "confidence": "partial",
       "manual_review": true,
-      "evidence": "Non-sensitive identifier observed; not unique to firmware without further evidence."
+      "evidence": "Observed manufacturer-like response field $.Manufacturer; meaning not assumed."
+    },
+    {
+      "metric": "device.model",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "ModelName",
+      "path": "$.ModelName",
+      "value": "SyntheticModel X1",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed model-like response field $.ModelName; meaning not assumed."
+    },
+    {
+      "metric": "device.firmware",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "FirmwareVersion",
+      "path": "$.FirmwareVersion",
+      "value": "1.2.3",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed firmware-like response field $.FirmwareVersion; meaning not assumed."
     }
   ],
   "extraction_candidates": [
     {
+      "metric": "device.manufacturer",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "Manufacturer",
+      "path": "$.Manufacturer",
+      "method": "json_path",
+      "expression": "$.Manufacturer",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Manufacturer in get_cgi_bin_ajax; meaning not assumed."
+    },
+    {
       "metric": "device.model",
-      "endpoint": "get-root",
+      "endpoint": "get_cgi_bin_ajax",
       "field": "ModelName",
       "path": "$.ModelName",
       "method": "json_path",
       "expression": "$.ModelName",
       "confidence": "partial",
       "manual_review": true,
-      "evidence": "Field name and nesting matched a known metric name; meaning must be confirmed on the device."
+      "evidence": "Observed candidate field $.ModelName in get_cgi_bin_ajax; meaning not assumed."
+    },
+    {
+      "metric": "device.firmware",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "FirmwareVersion",
+      "path": "$.FirmwareVersion",
+      "method": "json_path",
+      "expression": "$.FirmwareVersion",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.FirmwareVersion in get_cgi_bin_ajax; meaning not assumed."
+    },
+    {
+      "metric": "wan.uptime_s",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "Uptime",
+      "path": "$.WAN.Uptime",
+      "method": "json_path",
+      "expression": "$.WAN.Uptime",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.WAN.Uptime in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "optical.rx_power_dbm",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "RxPower",
+      "path": "$.Optical.RxPower",
+      "method": "json_path",
+      "expression": "$.Optical.RxPower",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Optical.RxPower in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "optical.tx_power_dbm",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "TxPower",
+      "path": "$.Optical.TxPower",
+      "method": "json_path",
+      "expression": "$.Optical.TxPower",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Optical.TxPower in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "optical.temperature_c",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "Temperature",
+      "path": "$.Optical.Temperature",
+      "method": "json_path",
+      "expression": "$.Optical.Temperature",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Optical.Temperature in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "voip.registration_state",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "RegistrationState",
+      "path": "$.VoIP.RegistrationState",
+      "method": "json_path",
+      "expression": "$.VoIP.RegistrationState",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.VoIP.RegistrationState in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "system.cpu_percent",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "CpuUsage",
+      "path": "$.System.CpuUsage",
+      "method": "json_path",
+      "expression": "$.System.CpuUsage",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.System.CpuUsage in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "system.memory_percent",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "MemoryUsed",
+      "path": "$.System.MemoryUsed",
+      "method": "json_path",
+      "expression": "$.System.MemoryUsed",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.System.MemoryUsed in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "devices.count",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "Devices",
+      "path": "$.Devices",
+      "method": "json_path",
+      "expression": "$.Devices",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Devices in get_cgi_bin_ajax_02; meaning not assumed."
     }
   ],
   "metric_mapping_candidates": [
     {
+      "metric": "device.manufacturer",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "Manufacturer",
+      "path": "$.Manufacturer",
+      "method": "json_path",
+      "expression": "$.Manufacturer",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Manufacturer in get_cgi_bin_ajax; meaning not assumed."
+    },
+    {
       "metric": "device.model",
-      "endpoint": "get-root",
+      "endpoint": "get_cgi_bin_ajax",
       "field": "ModelName",
       "path": "$.ModelName",
       "method": "json_path",
       "expression": "$.ModelName",
       "confidence": "partial",
       "manual_review": true,
-      "evidence": "Field name and nesting matched a known metric name; meaning must be confirmed on the device."
+      "evidence": "Observed candidate field $.ModelName in get_cgi_bin_ajax; meaning not assumed."
+    },
+    {
+      "metric": "device.firmware",
+      "endpoint": "get_cgi_bin_ajax",
+      "field": "FirmwareVersion",
+      "path": "$.FirmwareVersion",
+      "method": "json_path",
+      "expression": "$.FirmwareVersion",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.FirmwareVersion in get_cgi_bin_ajax; meaning not assumed."
+    },
+    {
+      "metric": "wan.uptime_s",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "Uptime",
+      "path": "$.WAN.Uptime",
+      "method": "json_path",
+      "expression": "$.WAN.Uptime",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.WAN.Uptime in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "optical.rx_power_dbm",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "RxPower",
+      "path": "$.Optical.RxPower",
+      "method": "json_path",
+      "expression": "$.Optical.RxPower",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Optical.RxPower in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "optical.tx_power_dbm",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "TxPower",
+      "path": "$.Optical.TxPower",
+      "method": "json_path",
+      "expression": "$.Optical.TxPower",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Optical.TxPower in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "optical.temperature_c",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "Temperature",
+      "path": "$.Optical.Temperature",
+      "method": "json_path",
+      "expression": "$.Optical.Temperature",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Optical.Temperature in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "voip.registration_state",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "RegistrationState",
+      "path": "$.VoIP.RegistrationState",
+      "method": "json_path",
+      "expression": "$.VoIP.RegistrationState",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.VoIP.RegistrationState in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "system.cpu_percent",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "CpuUsage",
+      "path": "$.System.CpuUsage",
+      "method": "json_path",
+      "expression": "$.System.CpuUsage",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.System.CpuUsage in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "system.memory_percent",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "MemoryUsed",
+      "path": "$.System.MemoryUsed",
+      "method": "json_path",
+      "expression": "$.System.MemoryUsed",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.System.MemoryUsed in get_cgi_bin_ajax_02; meaning not assumed."
+    },
+    {
+      "metric": "devices.count",
+      "endpoint": "get_cgi_bin_ajax_02",
+      "field": "Devices",
+      "path": "$.Devices",
+      "method": "json_path",
+      "expression": "$.Devices",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Observed candidate field $.Devices in get_cgi_bin_ajax_02; meaning not assumed."
     }
   ],
   "manual_review": [
-    "Confirm the selected host really is the ONT/router UI; the default gateway was only a hint.",
-    "Verify every endpoint path, HTTP method, query parameter, body field and scheme before enabling.",
-    "Confirm the authentication flow and select or implement a compatible handler if required."
+    "Confirm every endpoint path, query field and request body field against the source HAR.",
+    "Confirm the authentication handler, success field and session/token field names.",
+    "Confirm the meaning, unit and any transform for each universal metric candidate; none were inferred from field names alone.",
+    "Replace placeholder identification values with a stable, non-sensitive observed value.",
+    "Validate the disabled draft on a physical ONT before changing status or enabling it."
   ]
 }

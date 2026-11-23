@@ -8,11 +8,13 @@ developers who prefer the CLI. It never performs network I/O.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from xml.etree import ElementTree
 from urllib.parse import parse_qsl, urlparse
 
 from connector_manager import BODY_FORMATS, SCHEMES
@@ -26,6 +28,8 @@ PLACEHOLDERS = {
     "auth": "<redacted-auth>",
     "phone": "<redacted-phone>",
     "public_ip": "<redacted-public-ip>",
+    "private_ip": "<redacted-ip>",
+    "credential": "<redacted-credential>",
     "serial": "<redacted-serial>",
     "mac": "<redacted-mac>",
     "hostname": "<redacted-hostname>",
@@ -33,14 +37,15 @@ PLACEHOLDERS = {
 }
 
 _SENSITIVE_KEY_RULES: Tuple[Tuple[str, re.Pattern], ...] = (
-    ("password", re.compile(r"(password|passwd|pwd|loginpd|secret|credential|pppoe_pass)", re.I)),
+    ("password", re.compile(r"(password|passwd|pwd|loginpd|secret|credential|pppoe_pass|pppoe_password)", re.I)),
+    ("credential", re.compile(r"(username|user_name|loginname|authuser|pppoeuser|account|^user$)", re.I)),
     ("token", re.compile(r"(token|api[-_]?key|csrf|xsrf|nonce|signature)", re.I)),
     ("session", re.compile(r"(session|sessionid|sid|cookie|set[-_]?cookie)", re.I)),
     ("auth", re.compile(r"(authorization|auth)", re.I)),
     ("phone", re.compile(r"(phone|mobile|msisdn|tel(?:ephone)?|sipuser)", re.I)),
     ("serial", re.compile(r"(serial|^sn$|gpon[-_]?sn)", re.I)),
     ("mac", re.compile(r"(mac|hwaddr|hardwareaddr)", re.I)),
-    ("hostname", re.compile(r"(hostname|host_name|devicename|clientname|alias|username|user_name|^host$)", re.I)),
+    ("hostname", re.compile(r"(hostname|host_name|devicename|device_name|computername|friendlyname|clientname|alias|username|user_name|^host$)", re.I)),
 )
 
 _HEADER_REPLACEMENTS = {
@@ -67,6 +72,9 @@ _PRIVATE_NETWORKS = tuple(
 _MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
 _SERIAL_RE = re.compile(r"\b(?=[A-Z0-9]{10,}\b)(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{10,}\b")
 _AUTH_HEADER_RE = re.compile(r"^(Basic|Bearer|Digest|Token)\s+.+$", re.I)
+_TOKEN_VALUE_RE = re.compile(
+    r"(?<![A-Za-z0-9_/+=_-])(?=[A-Za-z0-9+/=_-]{20,})(?=[A-Za-z0-9+/=_-]*[A-Z])(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]+(?![A-Za-z0-9_/+=_-])"
+)
 
 _METRIC_KEYS: Tuple[Tuple[str, re.Pattern], ...] = (
     ("device.manufacturer", re.compile(r"(manufacturer|vendor|make)", re.I)),
@@ -106,6 +114,75 @@ def _slug(value: Any) -> str:
     return text[:48] or "item"
 
 
+def _id_part(value: Any) -> str:
+    """Return a stable, non-identifying slug component for connector ids."""
+
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())[:48]
+
+
+def _safe_identifier_value(value: Any) -> bool:
+    if isinstance(value, (dict, list)) or value is None:
+        return False
+    text = str(value)
+    if not text or len(text) > 48 or re.search(r"\d{6,}", text):
+        return False
+    return text == _redact_string(text, {})
+
+
+def _resolve_connector_id(
+    identifiers: List[Dict[str, Any]],
+    details: List[Dict[str, Any]],
+    *,
+    firmware_family: Optional[str] = None,
+    explicit: Optional[str] = None,
+) -> str:
+    """Resolve a permanent or explicitly temporary connector id.
+
+    Permanent ids use manufacturer + model (and firmware only when a reviewer
+    supplies a firmware family because variants need separate profiles). Network
+    addresses, serials, MACs and personal hostnames are never used.
+    """
+
+    if explicit:
+        return explicit
+
+    def value_for(metric: str) -> Optional[str]:
+        for item in identifiers:
+            if item.get("metric") == metric and _safe_identifier_value(item.get("value")):
+                return str(item["value"])
+        return None
+
+    manufacturer = value_for("device.manufacturer")
+    model = value_for("device.model")
+    manufacturer_part = _id_part(manufacturer or "")
+    model_part = _id_part(model or "")
+
+    if manufacturer_part and model_part:
+        resolved = f"{manufacturer_part}.{model_part}"
+        firmware_part = _id_part(firmware_family or "")
+        if firmware_part:
+            resolved += f".fw-{firmware_part}"
+        return resolved
+
+    signature: List[str] = []
+    identity_metrics = {
+        "device.manufacturer", "device.model", "device.firmware",
+        "device.hardware", "device.operator",
+    }
+    for item in identifiers:
+        if item.get("metric") not in identity_metrics:
+            continue
+        if not _safe_identifier_value(item.get("value")):
+            continue
+        signature.append("|".join(str(item.get(key, "")) for key in ("metric", "path", "field", "value")))
+    if not signature:
+        for detail in details:
+            for key, path, _value in _walk_fields(detail["response"]):
+                signature.append(f"{path}|{key}")
+    digest = hashlib.sha256("|".join(sorted(signature)).encode("utf-8")).hexdigest()[:10]
+    return f"observed.{model_part or 'capture'}-{digest}"
+
+
 def _is_private_address(value: str) -> bool:
     try:
         address = ipaddress.ip_address(value)
@@ -125,14 +202,14 @@ def _redact_string(text: str, counts: Dict[str, int]) -> str:
 
     def replace_ip(match: re.Match) -> str:
         candidate = match.group(0)
-        if _is_private_address(candidate):
-            return candidate
-        counts["public_ip"] = counts.get("public_ip", 0) + 1
-        return PLACEHOLDERS["public_ip"]
+        kind = "private_ip" if _is_private_address(candidate) else "public_ip"
+        counts[kind] = counts.get(kind, 0) + 1
+        return PLACEHOLDERS[kind]
 
     result = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", replace_ip, result)
     result = _MAC_RE.sub(lambda _m: _counted(counts, "mac"), result)
     result = _SERIAL_RE.sub(lambda _m: _counted(counts, "serial"), result)
+    result = _TOKEN_VALUE_RE.sub(lambda _m: _counted(counts, "token"), result)
 
     def replace_phone(match: re.Match) -> str:
         token = match.group(0)
@@ -266,6 +343,47 @@ def _content_format(mime: str) -> str:
     return "text"
 
 
+def _xml_field_names(text: Any) -> List[str]:
+    """List XML element names for evidence only; never create fake mappings."""
+
+    if not isinstance(text, str) or not text.strip():
+        return []
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError:
+        return []
+    return sorted({
+        element.tag.rsplit("}", 1)[-1]
+        for element in root.iter()
+        if isinstance(element.tag, str)
+    })
+
+
+def _unsupported_content_note(detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    fmt = detail.get("format")
+    if fmt == "json":
+        return None
+    if fmt == "xml":
+        return {
+            "format": "xml",
+            "fields_not_analyzed": _xml_field_names(detail.get("response_text")),
+            "reason": (
+                "XML element names were observed for evidence, but the connector runtime "
+                "has no XML extraction method. No extraction candidate was generated; "
+                "manual extraction work is required."
+            ),
+        }
+    return {
+        "format": fmt,
+        "fields_not_analyzed": ["<body>"],
+        "reason": (
+            "The runtime has no safe HTML extraction method. The response was not parsed "
+            "into field paths and no extraction candidate was generated; manual "
+            "extraction work is required."
+        ),
+    }
+
+
 def _safe_json(text: Any) -> Tuple[Optional[Any], bool]:
     if not isinstance(text, str) or not text.strip():
         return None, False
@@ -328,6 +446,7 @@ def _entry_detail(entry: Dict[str, Any], counts: Dict[str, int]) -> Dict[str, An
         "status": int(response.get("status") or 0),
         "content_type": mime,
         "format": _content_format(mime),
+        "response_text": content.get("text"),
         "response": response_payload,
         "started": str(entry.get("startedDateTime", "")),
     }
@@ -362,11 +481,13 @@ def _classify_auth(details: List[Dict[str, Any]]) -> Tuple[str, Optional[str], b
         classification, proposed = "token", "token"
     elif re.search(r"(accesstoken|access_token|auth[-_]?token|api[-_]?token|\btoken\b)", bodies_text):
         classification, proposed = "token", "token"
+    elif re.search(r"(loginpd|get_acs_random|acsrandom)", bodies_text + " ".join(item["path"] for item in details)):
+        classification, proposed = "fiberhome_aes", "fiberhome_aes"
     elif re.search(r"(set-cookie|\bsession\b|sessionid)", headers_text + bodies_text):
-        classification, proposed = "cookie_session", "session"
+        classification, proposed = "session", "session"
     elif _LOGIN_PATH_RE.search(" ".join(item["path"] for item in details)):
-        classification, proposed = "html_form", "form"
-    if re.search(r"(nonce|challenge|loginpd|encrypted|acsrandom)", bodies_text):
+        classification, proposed = "form", "form"
+    if re.search(r"(nonce|challenge|encrypted|acsrandom)", bodies_text) and classification != "fiberhome_aes":
         classification, proposed, manual = "proprietary_challenge_response", None, True
 
     for item in details:
@@ -391,12 +512,13 @@ def _identifier_candidates(details: List[Dict[str, Any]]) -> List[Dict[str, Any]
         ("model", re.compile(r"(model|productname|devicemodel)", re.I)),
         ("firmware", re.compile(r"(firmware|softwareversion|version)", re.I)),
         ("hardware", re.compile(r"(hardware|hwversion|hwver)", re.I)),
+        ("operator", re.compile(r"(operatorname|operator_name)", re.I)),
     )
     results: List[Dict[str, Any]] = []
     seen = set()
     for detail in details:
         for key, path, value in _walk_fields(detail["response"]):
-            if not isinstance(value, (str, int, float, bool)) or str(value).startswith("<redacted-"):
+            if not _safe_identifier_value(value):
                 continue
             for label, pattern in patterns:
                 if not pattern.search(key):
@@ -406,12 +528,14 @@ def _identifier_candidates(details: List[Dict[str, Any]]) -> List[Dict[str, Any]
                     continue
                 seen.add(signature)
                 results.append({
+                    "metric": f"device.{label}",
+                    "endpoint": detail["id"],
                     "field": key,
                     "path": path,
                     "value": value,
                     "confidence": "partial",
                     "manual_review": True,
-                    "evidence": f"Observed {label}-like response field {path}.",
+                    "evidence": f"Observed {label}-like response field {path}; meaning not assumed.",
                 })
                 break
     return results
@@ -450,6 +574,87 @@ def _metric_candidates(details: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return results
 
 
+def _collect_sensitive_literals(entries: List[Dict[str, Any]]) -> List[str]:
+    """Collect raw secret-looking literals for a fail-closed output check."""
+
+    literals = set()
+
+    def add_value(value: Any) -> None:
+        if isinstance(value, (str, int, float, bool)) and value != "":
+            text = str(value)
+            if len(text) >= 4:
+                literals.add(text)
+
+    def visit(value: Any, key: str = "") -> None:
+        if isinstance(value, dict):
+            for name, child in value.items():
+                if _sensitive_kind(name):
+                    add_value(child)
+                visit(child, str(name))
+        elif isinstance(value, (list, tuple)):
+            for child in value:
+                visit(child, key)
+        elif isinstance(value, str):
+            if _AUTH_HEADER_RE.match(value.strip()):
+                add_value(value)
+            for pattern in (_IPV4_VALUE_RE, _MAC_RE, _SERIAL_RE, _TOKEN_VALUE_RE, _PHONE_VALUE_RE):
+                for match in pattern.finditer(value):
+                    add_value(match.group(0))
+            for match in _SENSITIVE_KV_RE.finditer(value):
+                add_value(match.group(1))
+
+    for entry in entries:
+        visit(entry)
+    return sorted(literals)
+
+
+_IPV4_VALUE_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_PHONE_VALUE_RE = re.compile(r"(?<![\w])\+?\d[\d\s().-]{5,}\d(?![\w])")
+_SENSITIVE_KV_RE = re.compile(
+    r"(?i)(?:password|passwd|pwd|loginpd|secret|token|csrf|xsrf|nonce|session|cookie|pppoe_pass\w*|pppoe_user\w*|pppoe\w*|username|user_name|loginname|authuser|account|serialnumber|serial|gponsn|loid|phone|mobile|msisdn|telephone)"
+    r"[\s:=]+[\"']?([^&\"'\s,;]{3,})"
+)
+
+
+def _assert_output_safe(documents: List[Any], literals: List[str]) -> None:
+    """Refuse to write any output that still contains a raw sensitive literal."""
+
+    payload = json.dumps(documents, sort_keys=True, ensure_ascii=False)
+    leaked = [value for value in literals if value and value in payload]
+    if leaked:
+        raise ValueError(
+            "Refusing to write analysis output: a sensitive value remained "
+            f"({len(leaked)} literal(s))."
+        )
+
+
+def _extraction_rules(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Create conservative extraction rules without assumed units or transforms."""
+
+    rules: List[Dict[str, Any]] = []
+    seen = set()
+    for candidate in candidates:
+        metric = candidate.get("metric")
+        endpoint = candidate.get("endpoint")
+        path = candidate.get("path")
+        if not metric or not endpoint or not path:
+            continue
+        signature = (metric, endpoint, path)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        digest = hashlib.sha256("|".join(signature).encode("utf-8")).hexdigest()[:6]
+        rules.append({
+            "id": f"extract-{_slug(metric)}-{_slug(endpoint)}-{digest}",
+            "metric": metric,
+            "endpoint": endpoint,
+            "method": "json_path",
+            "expression": path,
+            "availability_on_missing": "unavailable",
+        })
+    return rules
+
+
 def _infer_dependencies(details: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     dependencies: Dict[str, List[str]] = {}
     dynamic_key = re.compile(r"(session|token|challenge|nonce|csrf|seed|stamp)", re.I)
@@ -476,6 +681,7 @@ def analyze_har(
     hostname: Optional[str] = None,
     connector_id: Optional[str] = None,
     display_name: Optional[str] = None,
+    firmware_family: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Analyze a HAR and return a draft profile plus evidence documents."""
 
@@ -535,45 +741,56 @@ def analyze_har(
     else:
         har_name = "inline.har"
     har_name = _slug(har_name)
-    model_value = next(
-        (str(item["value"]) for item in identifiers if re.search(r"model", item["field"], re.I)),
+    resolved_id = _resolve_connector_id(
+        identifiers, details, firmware_family=firmware_family, explicit=connector_id
+    )
+    manufacturer_value = next(
+        (str(item["value"]) for item in identifiers if item.get("metric") == "device.manufacturer"),
         None,
     )
-    slug_source = _slug(model_value or gateway or har_name)
-    resolved_id = connector_id or f"observed.{slug_source}"
-    resolved_name = display_name or (
-        f"{model_value} (HAR capture, draft)" if model_value else "Observed router (HAR capture, draft)"
+    model_value = next(
+        (str(item["value"]) for item in identifiers if item.get("metric") == "device.model"),
+        None,
     )
+    identity_label = (
+        f"{manufacturer_value} {model_value}" if manufacturer_value and model_value
+        else model_value or "Observed router"
+    )
+    resolved_name = display_name or f"{identity_label} (HAR capture, draft)"
 
+    primary_identifier = identifiers[0] if identifiers else None
     identification_rule = {
         "id": "observed-identifier",
         "phase": "pre_auth",
-        "source": endpoints[0]["id"] if endpoints else "root",
-        "field": identifiers[0]["field"] if identifiers else "__OBSERVE_FIELD__",
+        "source": primary_identifier.get("endpoint", endpoints[0]["id"] if endpoints else "root") if primary_identifier else (endpoints[0]["id"] if endpoints else "root"),
+        "field": primary_identifier["field"] if primary_identifier else "__OBSERVE_FIELD__",
         "operator": "equals",
-        "value": identifiers[0]["value"] if identifiers else "__MANUAL_REVIEW_REQUIRED__",
-        "confidence": "unknown",
-        "evidence": identifiers[0]["evidence"] if identifiers else "No non-sensitive identifier was observed; add one manually.",
+        "value": primary_identifier["value"] if primary_identifier else "__MANUAL_REVIEW_REQUIRED__",
+        "confidence": "partial" if primary_identifier else "unknown",
+        "evidence": primary_identifier["evidence"] if primary_identifier else "No non-sensitive identifier was observed; add one manually.",
     }
 
     auth_flow = {
         "id": "observed-auth-flow",
-        "type": proposed or "none",
+        "type": proposed or ("session" if manual_auth else "none"),
         "order": 1,
-        "success": {"field": "__OBSERVE_SUCCESS_FIELD__", "allowed": [True]},
+        "success": {"field": "<unobserved-success-field>"},
     }
-    if endpoints and proposed in ("session", "token", "form"):
-        auth_flow["endpoints"] = {
-            "login": next(
-                (item["id"] for item in endpoints if _LOGIN_PATH_RE.search(item["path"])),
-                endpoints[-1]["id"],
-            )
-        }
+    if endpoints and auth_flow["type"] in ("session", "token", "form"):
+        login_endpoint = next(
+            (
+                detail["id"] for detail in details
+                if _LOGIN_PATH_RE.search(detail["path"])
+                or re.search(r"(do_login|signin|authenticate|\"login\")", json.dumps(detail["body"]).lower())
+            ),
+            endpoints[-1]["id"],
+        )
+        auth_flow["endpoints"] = {"login": login_endpoint}
 
     manual_review = [
         "Confirm every endpoint path, query field and request body field against the source HAR.",
         "Confirm the authentication handler, success field and session/token field names.",
-        "Confirm that each universal metric candidate has the assumed meaning before enabling it.",
+        "Confirm the meaning, unit and any transform for each universal metric candidate; none were inferred from field names alone.",
         "Replace placeholder identification values with a stable, non-sensitive observed value.",
         "Validate the disabled draft on a physical ONT before changing status or enabling it.",
     ]
@@ -592,7 +809,7 @@ def analyze_har(
         "source_har": har_name,
         "requires_manual_auth_handler": manual_auth,
         "evidence": {
-            "source": f"Sanitized HAR analysis of selected host {gateway}; {len(selected)} matching request(s).",
+            "source": f"Sanitized HAR analysis of <selected-host>; {len(selected)} matching request(s).",
             "verified": False,
             "notes": [
                 "Generated from observed browser traffic only; no endpoint or value was invented.",
@@ -600,7 +817,7 @@ def analyze_har(
             ],
         },
         "identification": {
-            "confidence": "unknown",
+            "confidence": "partial" if identifiers else "unknown",
             "rules": [identification_rule],
         },
         "auth": {
@@ -608,7 +825,7 @@ def analyze_har(
             "flows": [auth_flow],
         },
         "endpoints": endpoints,
-        "extraction": [],
+        "extraction": _extraction_rules(metric_candidates),
         "validation": [],
         "dependencies": dependencies,
         "capabilities": capabilities,
@@ -649,6 +866,7 @@ def analyze_har(
         "endpoints": endpoints,
         "details": details,
         "redaction_counts": counts,
+        "sensitive_literals": sorted(set(_collect_sensitive_literals(selected)) | {gateway}),
         "selected_host": gateway,
         "filtered_entries": len(selected),
         "total_entries": len(entries),
@@ -659,19 +877,15 @@ def analyze_har(
 
 
 def write_outputs(analysis: Dict[str, Any], output_dir: Path) -> Dict[str, str]:
-    """Write the draft profile and sanitized evidence bundle."""
+    """Write the draft profile and sanitized evidence bundle, failing closed on leaks."""
 
     draft = analysis["draft"]
     output_dir = Path(output_dir)
     evidence_dir = output_dir / f"{draft['id']}.evidence"
     endpoints_dir = evidence_dir / "endpoints"
-    endpoints_dir.mkdir(parents=True, exist_ok=True)
-
-    draft_path = output_dir / f"{draft['id']}.draft.json"
-    draft_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
     summary = {
-        "selected_host": analysis["selected_host"],
+        "selected_host": "<selected-host>",
         "source_har": draft["source_har"],
         "total_entries": analysis["total_entries"],
         "filtered_entries": analysis["filtered_entries"],
@@ -681,21 +895,16 @@ def write_outputs(analysis: Dict[str, Any], output_dir: Path) -> Dict[str, str]:
         "redaction_counts": analysis["redaction_counts"],
         "warning": "Raw HAR content is never copied into this evidence bundle.",
     }
-    (evidence_dir / "capture-summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    (evidence_dir / "redaction-report.json").write_text(
-        json.dumps(analysis["redaction_counts"], indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
+    endpoint_records = []
     for detail in analysis["details"]:
-        record = {
+        endpoint_records.append({
             "id": detail["id"],
             "method": detail["method"],
             "path": detail["path"],
             "status": detail["status"],
             "content_type": detail["content_type"],
+            "format": detail["format"],
+            "unsupported_content": _unsupported_content_note(detail),
             "request": {
                 "query": detail["query"],
                 "headers": detail["headers"],
@@ -703,8 +912,25 @@ def write_outputs(analysis: Dict[str, Any], output_dir: Path) -> Dict[str, str]:
             },
             "response": detail["response"],
             "response_fields": sorted({key for key, _path, _value in _walk_fields(detail["response"])}),
-        }
-        (endpoints_dir / f"{detail['id']}.json").write_text(
+        })
+
+    documents = [draft, summary, analysis["redaction_counts"], *endpoint_records]
+    _assert_output_safe(documents, analysis.get("sensitive_literals", []))
+
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    endpoints_dir.mkdir(parents=True, exist_ok=True)
+
+    draft_path = output_dir / f"{draft['id']}.draft.json"
+    draft_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (evidence_dir / "capture-summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    (evidence_dir / "redaction-report.json").write_text(
+        json.dumps(analysis["redaction_counts"], indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    for record in endpoint_records:
+        (endpoints_dir / f"{record['id']}.json").write_text(
             json.dumps(record, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
 

@@ -3,8 +3,8 @@ import unittest
 from unittest.mock import patch
 
 
-class FakeClient:
-    def __init__(self, logout_result=(True, "Disconnected from router.")):
+class FakeExecutor:
+    def __init__(self, logout_result=True):
         self.logout_result = logout_result
         self.logged_out = False
 
@@ -23,6 +23,7 @@ class AppVoiceTests(unittest.TestCase):
         }
         with patch("gateway.detect_gateway", return_value=detection):
             cls.app_module = importlib.import_module("app")
+        cls.legacy_view = importlib.import_module("legacy_view")
 
     def setUp(self):
         self.original_state = dict(self.app_module.state)
@@ -31,7 +32,7 @@ class AppVoiceTests(unittest.TestCase):
         self.app_module.state.clear()
         self.app_module.state.update(self.original_state)
 
-    def test_build_view_exposes_voice_data_and_call_action(self):
+    def test_legacy_view_exposes_voice_data_and_call_action(self):
         raw = {
             "get_voice_status": {
                 "voice_status": {
@@ -43,21 +44,21 @@ class AppVoiceTests(unittest.TestCase):
                 }
             }
         }
-        view = self.app_module.build_view(raw)
+        view = self.legacy_view.build_view(raw)
 
         self.assertEqual(view["voip"]["phone_number"], "213000000000")
         self.assertEqual(view["voip"]["registration_state"], "IDLE")
         self.assertTrue(view["call_action"]["enabled"])
         self.assertEqual(view["call_action"]["dial_uri"], "tel:213000000000")
 
-    def test_build_view_has_disabled_call_action_without_phone(self):
-        view = self.app_module.build_view({})
+    def test_legacy_view_has_disabled_call_action_without_phone(self):
+        view = self.legacy_view.build_view({})
         self.assertFalse(view["call_action"]["enabled"])
         self.assertIsNone(view["call_action"]["dial_uri"])
 
     def test_disconnect_logs_out_from_router_and_clears_state(self):
-        client = FakeClient()
-        self.app_module.state["client"] = client
+        executor = FakeExecutor()
+        self.app_module.state["executor"] = executor
         self.app_module.state["credentials"] = {"username": "user"}
         self.app_module.state["connected"] = True
 
@@ -65,14 +66,14 @@ class AppVoiceTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["router_logout"])
-        self.assertTrue(client.logged_out)
-        self.assertIsNone(self.app_module.state["client"])
+        self.assertTrue(executor.logged_out)
+        self.assertIsNone(self.app_module.state["executor"])
         self.assertIsNone(self.app_module.state["credentials"])
         self.assertFalse(self.app_module.state["connected"])
 
     def test_disconnect_still_reports_failure_when_router_logout_fails(self):
-        client = FakeClient(logout_result=(False, "Router logout request failed."))
-        self.app_module.state["client"] = client
+        executor = FakeExecutor(logout_result=False)
+        self.app_module.state["executor"] = executor
         self.app_module.state["connected"] = True
 
         response = self.app_module.app.test_client().post("/api/disconnect")
@@ -81,7 +82,7 @@ class AppVoiceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(payload["router_logout"])
         self.assertIn("could not be ended", payload["message"])
-        self.assertIsNone(self.app_module.state["client"])
+        self.assertIsNone(self.app_module.state["executor"])
         self.assertFalse(self.app_module.state["connected"])
 
 

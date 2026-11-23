@@ -6,7 +6,9 @@ let speedTimer = null;
 let speedWatchTimer = null;
 let speedStartedAt = 0;
 
-/* ---------- helpers ---------- */
+const READABLE_STATES = new Set(['available', 'stale']);
+
+/* ---------- normalized-model helpers ---------- */
 function setText(id, value) {
   const el = $(id);
   if (el) el.textContent = (value === undefined || value === null || value === '') ? '–' : value;
@@ -16,48 +18,95 @@ function esc(value) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+function show(id, visible) { $(id).hidden = !visible; }
+function metric(model, domain, metricId) {
+  const domains = (model && model.domains) || {};
+  return ((domains[domain] || {})[metricId]) || {
+    availability: 'not_loaded', value: null, source_value: null, unit: null
+  };
+}
+function metricText(m, suffix) {
+  if (READABLE_STATES.has(m.availability) && m.value !== null && m.value !== undefined && m.value !== '') {
+    return String(m.value) + (suffix || '');
+  }
+  if (m.availability === 'not_loaded') return '–';
+  return String(m.availability).replace(/_/g, ' ');
+}
+function valueText(model, domain, metricId, suffix) {
+  return metricText(metric(model, domain, metricId), suffix);
+}
 function kvTable(id, rows) {
   const table = $(id);
+  if (!table) return;
   table.innerHTML = rows.map(([k, v]) =>
     `<tr><td>${esc(k)}</td><td>${esc(v == null || v === '' ? '–' : v)}</td></tr>`
   ).join('');
 }
-function show(id, visible) { $(id).hidden = !visible; }
-
-/* Accept only digits, separators, and one optional leading '+'. */
-function dialUriFrom(value) {
-  if (value === undefined || value === null) return null;
-  const raw = String(value).trim();
-  if (!raw || /[A-Za-z]/.test(raw)) return null;
-  if ((raw.match(/\+/g) || []).length > 1) return null;
-  const international = raw.startsWith('+');
-  if (raw.includes('+') && !international) return null;
-  const digits = raw.replace(/\D/g, '');
-  if (digits.length < 7 || digits.length > 15) return null;
-  return encodeURI('tel:' + (international ? '+' : '') + digits);
+function humanUptime(seconds) {
+  if (seconds === null || seconds === undefined || seconds === '') return '–';
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return 'invalid';
+  const hours = Math.floor(n / 3600);
+  const minutes = Math.floor((n % 3600) / 60);
+  const secs = Math.floor(n % 60);
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h ${minutes}m`;
+  }
+  return `${hours}h ${minutes}m ${secs}s`;
+}
+function collection(model, name) {
+  return ((model && model.collections) || {})[name] || {
+    name, items: [], loaded: false, availability: 'not_loaded', error: null
+  };
+}
+function collectionChips(model, name) {
+  const data = collection(model, name);
+  if (!data.loaded) return `<span class="muted">${esc(data.availability.replace(/_/g, ' '))}</span>`;
+  return data.items.map(item => `<span class="chip">${esc(item.name || item.id || '')}</span>`).join('') ||
+    '<span class="muted">none</span>';
 }
 
-function metricValue(model, domain, metricId) {
-  const domains = (model && model.domains) || {};
-  const metric = (domains[domain] || {})[metricId] || {};
-  return metric;
-}
-
-/* ---------- gateway detection ---------- */
-async function loadGateway() {
+/* ---------- discovery ---------- */
+async function loadDiscovery() {
   try {
-    const res = await fetch('/api/gateway');
+    const res = await fetch('/api/discovery');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    if (data.gateway) {
-      $('gatewayInput').value = data.gateway;
-      $('loginGateway') && ($('loginGateway').textContent = data.gateway);
-      $('gatewayBadge').textContent = data.gateway +
-        (data.detected ? ' ✓' : ' (guess)');
+    if (data.gateway) $('gatewayInput').value = data.gateway;
+    $('gatewayBadge').textContent = data.gateway +
+      (data.detected ? ' ✓' : ' (guess)');
+
+    $('detectedDevice').textContent = data.detected_device ||
+      (data.detected ? 'Gateway detected' : 'Gateway not detected');
+    $('profileMatch').textContent = data.selected_profile
+      ? `${data.selected_profile} (${data.identification_confidence})`
+      : 'Unknown firmware — choose a profile';
+    $('discoveryEvidence').textContent = data.evidence || 'No identification evidence.';
+    const hint = data.credential_suggestion || {};
+    $('credentialHint').textContent = hint.label
+      ? `${hint.label}. ${hint.provenance || ''}`
+      : 'No credential values are stored in this app.';
+
+    const select = $('profileInput');
+    const previous = select.value;
+    select.innerHTML = '<option value="">Select a profile…</option>' +
+      (data.profiles || []).map(profile =>
+        `<option value="${esc(profile.id)}">${esc(profile.display_name)} · ${esc(profile.status || 'observed')}</option>`
+      ).join('');
+    select.value = data.selected_profile || (previous &&
+      (data.profiles || []).some(p => p.id === previous) ? previous : '');
+
+    if ((data.discovery_errors || []).length) {
+      $('discoveryEvidence').textContent += ' · ' + data.discovery_errors.join(' · ');
     }
-  } catch (e) { /* keep the fallback value */ }
+  } catch (e) {
+    $('detectedDevice').textContent = 'discovery unavailable';
+    $('discoveryEvidence').textContent = e.message;
+  }
 }
 
-/* ---------- login ---------- */
+/* ---------- connect ---------- */
 $('loginForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const btn = $('loginBtn');
@@ -65,7 +114,7 @@ $('loginForm').addEventListener('submit', async (event) => {
   btn.disabled = true;
   btn.textContent = 'Connecting…';
   msg.className = 'msg';
-  msg.textContent = 'Detecting gateway and logging in…';
+  msg.textContent = 'Authenticating with the selected connector profile…';
 
   try {
     const res = await fetch('/api/connect', {
@@ -73,9 +122,9 @@ $('loginForm').addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         gateway: $('gatewayInput').value.trim(),
-        username: $('userInput').value.trim(),
+        profile_id: $('profileInput').value,
+        username: $('userInput').value,
         password: $('passInput').value,
-        mode: $('modeInput').value,
       }),
     });
     const data = await res.json();
@@ -125,124 +174,163 @@ async function refreshData() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     render(await res.json());
   } catch (e) {
-    // keep the last known values on a transient failure
     $('lastUpdate').textContent = 'refresh failed: ' + e.message;
   }
 }
 
-function renderVoip(d) {
-  const voip = d.voip || {};
-  const phoneMetric = metricValue(d, 'voip', 'voip.phone_number');
-  const regMetric = metricValue(d, 'voip', 'voip.registration_state');
-  const action = d.call_action || voip.call_action || null;
+function renderVoip(model) {
+  const phoneMetric = metric(model, 'voip', 'voip.phone_number');
+  const registration = metric(model, 'voip', 'voip.registration_state');
+  const action = model.call_action || { enabled: false, dial_uri: null };
+  const phone = READABLE_STATES.has(phoneMetric.availability) ? phoneMetric.value : null;
+  const stateText = metricText(registration);
 
-  const phone = phoneMetric.value !== undefined
-    ? phoneMetric.value
-    : (voip.phone_number || voip.phoneNumber || null);
-  const availability = phoneMetric.availability || voip.phone_number_availability
-    || voip.availability || 'not_loaded';
-  const registration = regMetric.value !== undefined
-    ? regMetric.value
-    : (voip.registration_state || voip.registrationState || null);
-
-  let dialUri = null;
-  if (action) {
-    if (action.enabled && action.dial_uri) dialUri = action.dial_uri;
-  } else if (availability === 'available' || availability === 'stale') {
-    dialUri = dialUriFrom(phone);
-  }
-
-  const stateText = registration || String(availability).replace(/_/g, ' ');
-  $('voipState').textContent = stateText;
-  $('voipState').className = 'pill' + (dialUri ? '' : ' warn');
   setText('voipPhone', phone);
+  $('voipState').textContent = stateText === '–'
+    ? String(phoneMetric.availability).replace(/_/g, ' ')
+    : stateText;
+  $('voipState').className = 'pill' + (action.enabled ? '' : ' warn');
 
   const btn = $('voipCallBtn');
+  const dialUri = action.enabled && typeof action.dial_uri === 'string' &&
+    action.dial_uri.startsWith('tel:') ? action.dial_uri : null;
   btn.dataset.dialUri = dialUri || '';
   btn.hidden = !dialUri;
   btn.disabled = !dialUri;
   btn.title = dialUri ? 'Open phone dialer · not ONT SIP' : 'No validated phone number';
 }
 
-function render(d) {
-  const dev = d.device || {}, net = d.internet || {}, sys = d.system || {}, opt = d.optical || {};
+function renderSpeed(model) {
+  const download = metric(model, 'speed_test', 'speed_test.download_mbps');
+  const upload = metric(model, 'speed_test', 'speed_test.upload_mbps');
+  const hasResult = READABLE_STATES.has(download.availability) &&
+    READABLE_STATES.has(upload.availability);
+  if (!hasResult) return;
+  setText('spDown', download.value);
+  setText('spUp', upload.value);
+  setText('spPing', valueText(model, 'speed_test', 'speed_test.ping_ms'));
+  setText('spJitter', valueText(model, 'speed_test', 'speed_test.jitter_ms'));
+  const sponsor = metric(model, 'speed_test', 'speed_test.sponsor');
+  const server = metric(model, 'speed_test', 'speed_test.server');
+  const country = metric(model, 'speed_test', 'speed_test.country');
+  $('spServer').textContent = [sponsor.value, server.value, country.value]
+    .filter(Boolean).join(' · ');
+  show('speedIdle', false);
+  show('speedResult', true);
+}
 
-  setText('sPublicIp', net.public_ip);
-  setText('sStatus', net.status);
-  setText('sUptime', sys.uptime);
-  setText('sTx', opt.tx);
-  setText('sRx', opt.rx);
-  setText('sDevices', (d.devices || []).length);
-  setText('sModel', dev.model);
-  setText('sOperator', dev.operator);
-  renderVoip(d);
+function render(model) {
+  if (!model || !model.domains) {
+    $('lastUpdate').textContent = 'unexpected dashboard payload';
+    return;
+  }
 
-  $('wanStatusPill').textContent = net.status || '–';
-  $('wanStatusPill').className = net.status === 'Connected' ? 'pill' : 'pill warn';
-  $('ponPill').textContent = opt.mode || '–';
-  $('deviceCount').textContent = (d.devices || []).length;
+  const uptime = metric(model, 'system', 'system.uptime_s');
+  const wanStatus = metric(model, 'wan', 'wan.status');
+  const ponMode = metric(model, 'optical', 'optical.pon_mode');
+  const devicesCount = metric(model, 'connected_devices', 'devices.count');
+  const modelName = metric(model, 'device_identity', 'device.model');
+  const operator = metric(model, 'device_identity', 'device.operator');
+
+  setText('sPublicIp', valueText(model, 'wan', 'wan.public_ip'));
+  setText('sStatus', metricText(wanStatus));
+  setText('sUptime', READABLE_STATES.has(uptime.availability)
+    ? humanUptime(uptime.value) : metricText(uptime));
+  setText('sTx', valueText(model, 'optical', 'optical.tx_power_dbm'));
+  setText('sRx', valueText(model, 'optical', 'optical.rx_power_dbm'));
+  setText('sDevices', metricText(devicesCount));
+  setText('sModel', metricText(modelName));
+  setText('sOperator', metricText(operator));
+  renderVoip(model);
+  renderSpeed(model);
+
+  $('wanStatusPill').textContent = metricText(wanStatus);
+  $('wanStatusPill').className = 'pill' + (wanStatus.value === 'Connected' ? '' : ' warn');
+  $('ponPill').textContent = metricText(ponMode);
+  $('deviceCount').textContent = metricText(devicesCount);
 
   kvTable('wanTable', [
-    ['Connection', net.name], ['Public IP', net.public_ip],
-    ['Type', net.type], ['Status', net.status],
-    ['ISP gateway', net.gateway], ['DNS servers', net.dns],
-    ['VLAN ID', net.vlan], ['PPPoE user', net.pppoe_user],
-    ['WAN MAC', dev.wan_mac], ['MTU', net.mtu], ['NAT', net.nat],
-    ['Connection uptime', net.uptime], ['Last error', net.error],
+    ['Connection', valueText(model, 'wan', 'wan.connection_name')],
+    ['Public IP', valueText(model, 'wan', 'wan.public_ip')],
+    ['Type', valueText(model, 'wan', 'wan.connection_type')],
+    ['Status', metricText(wanStatus)],
+    ['ISP gateway', valueText(model, 'wan', 'wan.gateway_ip')],
+    ['DNS servers', valueText(model, 'wan', 'wan.dns_servers')],
+    ['VLAN ID', valueText(model, 'wan', 'wan.vlan_id')],
+    ['PPPoE user', valueText(model, 'wan', 'wan.pppoe_user')],
+    ['WAN MAC', valueText(model, 'wan', 'wan.mac')],
+    ['MTU', valueText(model, 'wan', 'wan.mtu')],
+    ['NAT', valueText(model, 'wan', 'wan.nat')],
+    ['Connection uptime', READABLE_STATES.has(metric(model, 'wan', 'wan.uptime_s').availability)
+      ? humanUptime(metric(model, 'wan', 'wan.uptime_s').value)
+      : metricText(metric(model, 'wan', 'wan.uptime_s'))],
+    ['Last error', valueText(model, 'wan', 'wan.last_error')],
   ]);
 
   kvTable('ponTable', [
-    ['PON mode', opt.mode], ['Optical TX power', opt.tx ? opt.tx + ' dBm' : ''],
-    ['Optical RX power', opt.rx ? opt.rx + ' dBm' : ''],
-    ['Transceiver temp', opt.temperature ? opt.temperature + ' °C' : ''],
-    ['Laser bias current', opt.current ? opt.current + ' mA' : ''],
-    ['Supply voltage', opt.voltage ? opt.voltage + ' V' : ''],
-    ['ONU ID', opt.onu_id], ['OLT vendor', opt.vendor],
-    ['Registration state', opt.reg_state], ['Auth status', opt.auth],
-    ['LoID', opt.loid],
-    ['Bytes sent', opt.bytes_sent], ['Bytes received', opt.bytes_recv],
-    ['Packets sent', opt.packets_sent], ['Packets received', opt.packets_recv],
+    ['PON mode', valueText(model, 'optical', 'optical.pon_mode')],
+    ['Optical TX power', valueText(model, 'optical', 'optical.tx_power_dbm', ' dBm')],
+    ['Optical RX power', valueText(model, 'optical', 'optical.rx_power_dbm', ' dBm')],
+    ['Transceiver temp', valueText(model, 'optical', 'optical.temperature_c', ' °C')],
+    ['Laser bias current', valueText(model, 'optical', 'optical.bias_current_ma', ' mA')],
+    ['Supply voltage', valueText(model, 'optical', 'optical.supply_voltage_v', ' V')],
+    ['ONU ID', valueText(model, 'optical', 'optical.onu_id')],
+    ['OLT vendor', valueText(model, 'optical', 'optical.olt_vendor')],
+    ['Registration state', valueText(model, 'optical', 'optical.registration_state')],
+    ['Auth status', valueText(model, 'optical', 'optical.auth_status')],
+    ['LoID', valueText(model, 'optical', 'optical.loid')],
+    ['Bytes sent', valueText(model, 'optical', 'optical.bytes_sent')],
+    ['Bytes received', valueText(model, 'optical', 'optical.bytes_received')],
+    ['Packets sent', valueText(model, 'optical', 'optical.packets_sent')],
+    ['Packets received', valueText(model, 'optical', 'optical.packets_received')],
   ]);
 
   kvTable('systemTable', [
-    ['Manufacturer', dev.manufacturer], ['Model', dev.model],
-    ['Hardware version', dev.hardware], ['Software version', dev.software],
-    ['Serial number', dev.serial], ['GPON SN (hex)', dev.gpon_sn],
-    ['Operator', dev.operator], ['Base MAC', dev.base_mac],
-    ['System uptime', sys.uptime], ['CPU usage', sys.cpu + '%'],
-    ['Memory usage', sys.memory + '%'], ['Flash usage', sys.flash + '%'],
-    ['LAN ports', sys.lan_ports], ['Uplink', sys.uplink],
-    ['Kernel', dev.os], ['Compiled', dev.compiled],
+    ['Manufacturer', valueText(model, 'device_identity', 'device.manufacturer')],
+    ['Model', metricText(modelName)],
+    ['Hardware version', valueText(model, 'device_identity', 'device.hardware')],
+    ['Software version', valueText(model, 'device_identity', 'device.firmware')],
+    ['Serial number', valueText(model, 'device_identity', 'device.serial')],
+    ['GPON SN', valueText(model, 'device_identity', 'device.gpon_sn')],
+    ['Operator', metricText(operator)],
+    ['Base MAC', valueText(model, 'device_identity', 'device.mac_base')],
+    ['WAN MAC', valueText(model, 'wan', 'wan.mac')],
+    ['System uptime', READABLE_STATES.has(uptime.availability)
+      ? humanUptime(uptime.value) : metricText(uptime)],
+    ['CPU usage', valueText(model, 'system', 'system.cpu_percent', '%')],
+    ['Memory usage', valueText(model, 'system', 'system.memory_percent', '%')],
+    ['Flash usage', valueText(model, 'system', 'system.flash_percent', '%')],
+    ['LAN ports', valueText(model, 'system', 'system.lan_port_count')],
+    ['Uplink', valueText(model, 'system', 'system.uplink_mode')],
+    ['Kernel', valueText(model, 'system', 'system.kernel')],
+    ['Compiled', valueText(model, 'system', 'system.compile_time')],
   ]);
 
-  kvTable('lanTable', (d.lan_ports || []).map(p => [p.port, p.status]));
-
-  $('ssidList').innerHTML = (d.ssids || []).map(s => `<span class="chip">${esc(s)}</span>`).join('') || '<span class="muted">none</span>';
+  const lan = collection(model, 'lan_ports');
+  kvTable('lanTable', lan.loaded
+    ? lan.items.map(item => [item.name || item.id || 'port', item.status || '–'])
+    : [['LAN ports', lan.availability.replace(/_/g, ' ')]]);
+  $('ssidList').innerHTML = collectionChips(model, 'ssids');
 
   const tbody = $('deviceTable').querySelector('tbody');
-  tbody.innerHTML = (d.devices || []).map((item, i) => {
-    const sourceClass = item.source === 'DHCP' ? 'dhcp' : '';
-    const linkClass = /2\.4G|5G/i.test(item.type) ? 'wifi' : '';
-    return `<tr>
-      <td>${i + 1}</td>
-      <td>${esc(item.host)}</td>
-      <td class="mono">${esc(item.ip)}</td>
-      <td class="mono">${esc(item.mac)}</td>
-      <td><span class="tag ${linkClass}">${esc(item.type)}</span></td>
-      <td><span class="tag ${sourceClass}">${esc(item.source)}</span></td>
-      <td class="mono">${esc(item.uptime)}</td>
-    </tr>`;
-  }).join('');
-
-  // Non-FiberHome routers: show whatever the device actually exposes.
-  const generic = d.generic || [];
-  show('genericPanel', generic.length > 0);
-  if (generic.length) {
-    $('profilePill').textContent = d.profile || 'generic';
-    $('genericContent').innerHTML = generic.map(item =>
-      `<div class="generic-block"><h3>${esc(item.endpoint)}</h3>` +
-      `<pre class="generic-pre">${esc(JSON.stringify(item.data, null, 2))}</pre></div>`
-    ).join('');
+  const deviceData = collection(model, 'devices');
+  if (!deviceData.loaded || !model.devices_loaded) {
+    const stateText = deviceData.availability.replace(/_/g, ' ');
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">${esc(stateText)}</td></tr>`;
+  } else {
+    tbody.innerHTML = model.devices.map((item, i) => {
+      const sourceClass = item.address_source === 'DHCP' ? 'dhcp' : '';
+      const linkClass = /2\.4G|5G/i.test(item.link_type || '') ? 'wifi' : '';
+      return `<tr>
+        <td>${i + 1}</td>
+        <td>${esc(item.hostname || 'unknown')}</td>
+        <td class="mono">${esc(item.ip_address || '')}</td>
+        <td class="mono">${esc(item.mac_address || '')}</td>
+        <td><span class="tag ${linkClass}">${esc(item.link_type || '-')}</span></td>
+        <td><span class="tag ${sourceClass}">${esc(item.address_source || '')}</span></td>
+        <td class="mono">${esc(humanUptime(item.uptime_s))}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="muted">none</td></tr>';
   }
 
   $('lastUpdate').textContent = 'last update ' + new Date().toLocaleTimeString();
@@ -302,14 +390,8 @@ async function pollSpeed() {
     speedTimer = null;
     if (speedWatchTimer) { clearInterval(speedWatchTimer); speedWatchTimer = null; }
     show('speedProgress', false);
-    if (s.status === 'done' && s.result) {
-      setText('spDown', s.result.download);
-      setText('spUp', s.result.upload);
-      setText('spPing', s.result.ping);
-      setText('spJitter', s.result.jitter);
-      $('spServer').textContent = [s.result.sponsor, s.result.server, s.result.country]
-        .filter(Boolean).join(' · ');
-      show('speedResult', true);
+    if (s.status === 'done') {
+      refreshData();
     } else if (s.status === 'error') {
       $('speedError').textContent = s.error || 'Speedtest failed.';
       show('speedError', true);
@@ -339,8 +421,9 @@ function leaveDashboard(message) {
   show('disconnectBtn', false);
   $('statusDot').className = 'dot dot-off';
   const msg = $('loginMsg');
-  msg.className = 'msg' + (message ? ' error' : '');
+  msg.className = 'msg' + (message && message !== 'Disconnected.' ? ' error' : ' ok');
   msg.textContent = message || '';
+  loadDiscovery();
 }
 
 /* ---------- PWA (install from the browser menu) ---------- */
@@ -352,7 +435,7 @@ if ('serviceWorker' in navigator) {
 
 /* ---------- init ---------- */
 async function init() {
-  await loadGateway();
+  await loadDiscovery();
   try {
     const res = await fetch('/api/session');
     const session = await res.json();

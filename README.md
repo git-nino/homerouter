@@ -1,7 +1,8 @@
 # Gateway Monitor
 
-A mobile-first, Netdata-style dashboard for the FiberHome HG6145F1 (and similar)
-ONU/gateways. Runs locally on **port 7000**.
+A mobile-first, Netdata-style dashboard for FTTH ONU/gateways. Connector profiles
+select the authentication and collection flow; the dashboard only consumes the
+normalized `UniversalModel`. Runs locally on **port 7000**.
 
 ## Run
 
@@ -17,28 +18,24 @@ First run creates `~/.venvs/gwmon` and installs `flask`, `requests`,
 
 ## Use
 
-1. The app detects the gateway IP from your network (`/proc/net/route`, local
-   subnets and common router addresses) and pre-fills it.
-2. Username `user` and password `user1234` are pre-filled — just press **Enter**.
-   Change them if your router uses different credentials (e.g. the verified
-   FiberHome default `user123456`).
-3. **Authentication mode** is selectable: `Auto-detect` tries FiberHome AES,
-   then plain-text login, then HTTP Basic, and keeps the first method that
-   actually returns data. Pick a specific mode if you know your router type.
-   Non-FiberHome routers show a **Discovered router data** panel with whatever
-   their endpoints expose.
-4. The dashboard auto-refreshes every 5 seconds. Summary tiles appear in this
-   order: Public IP, Uptime, Optical TX, Optical RX, Devices, Model. CPU and
-   memory remain in the System Information panel. The VoIP/Telephony card comes
-   next, followed by WAN/Optical, System/LAN/WiFi and Connected Devices. The
-   Call button appears only when a validated phone number is available and
-   opens your phone's dialer; the app never places the call itself.
-5. Tap **Speedtest by Ookla** at the top to run a download / upload / latency
-   test (uses `speedtest-cli`; the test runs in the background and takes
-   ~30–60 s).
-6. **Disconnect** clears the local session and also sends `do_logout` to the
-   router, so a subsequent direct login attempt sees a fresh session instead of
-   "already connected".
+1. On load the app detects the gateway IP, runs **unauthenticated** discovery
+   endpoints, and displays the observed device, matching profile, evidence and
+   credential provenance. No authentication happens at this stage.
+2. Enter your own username and password, confirm or override the suggested
+   connector profile, then press **Connect**. The selected profile — not a
+   hardcoded branch in `app.py` — determines the authentication flow and
+   endpoints. Unknown firmware leaves the profile unselected.
+3. The dashboard auto-refreshes every 5 seconds. Summary tiles appear in this
+   order: Public IP, Uptime, Optical TX, Optical RX, Devices, Model. The five
+   sections are Speed Test, WAN/Internet, VoIP/Telephony, System Information and
+   Connected Devices. Missing readings show an explicit state instead of `0`.
+4. The Call button appears only when a validated phone number is available and
+   opens your phone's dialer after a tap; the app never places a call itself.
+5. Tap **Speedtest by Ookla** to run a local download / upload / latency test
+   (uses `speedtest-cli`; results are injected into the `speed_test` domain of
+   the universal model).
+6. **Disconnect** clears the local session and sends the profile's logout
+   endpoint when one is defined.
 
 ## One-command install (Termux or Ubuntu)
 
@@ -88,6 +85,22 @@ work without a certificate. Opening the app via `http://<phone-ip>:7000` will
 show the dashboard, but PWA installation will not be offered — use `localhost`
 for that.
 
+## Universal runtime (Phase 2)
+
+The live path is:
+
+```
+gateway detection → device identification → ConnectorManager → connectors.json
+→ ConnectorExecutor → auth handlers + HTTP → profile extraction
+→ UniversalModel → unified dashboard
+```
+
+`auth_handlers.py` contains a controlled registry; the FiberHome handler delegates
+AES encryption to the existing `gateway.fhencrypt` helper. Profile JSON never
+evaluates code. `legacy_view.py` is kept only for regression comparison and is
+not imported by `app.py`. See `docs/AUDIT_PHASE2.md` for evidence and the
+remaining physical-device check.
+
 ## Connector catalog (Phase 3)
 
 Connector definitions live in `config/connectors.json`. They describe only
@@ -121,18 +134,22 @@ python3 -m unittest discover -s tests -v
 
 ## Files
 
-- `app.py` — Flask server, API routes, speedtest worker
-- `gateway.py` — gateway detection, AES login, data collection
+- `app.py` — Flask server, discovery/connect/data APIs, speedtest worker; no vendor-specific normalization
+- `gateway.py` — gateway detection and the legacy FiberHome client/AES helper used only by the controlled handler and regression tests
 - `models/` — universal normalized FTTH model (seven domains, explicit availability states, safe dialer actions)
-- `connector_manager.py` — catalog loading, structural validation, identification scoring, and credential suggestions
-- `config/connectors.json`, `config/connector.schema.json` — observed connector profiles and their JSON schema
+- `connector_manager.py` — catalog loading, validation, identification scoring, credential suggestions
+- `connector_executor.py` — profile-driven endpoint execution, extraction, validation, collections, sessions and errors
+- `auth_handlers.py` — controlled auth registry; no profile text is executed as code
+- `legacy_view.py` — legacy comparison builder only; never used by the live app
+- `config/connectors.json`, `config/connector.schema.json` — connector profiles and their JSON schema
 - `config/default_credentials.json` — secret-free credential suggestions with provenance
 - `tools/connector_builder.py` — `create`, `validate`, and `list` CLI
-- `tests/` — unit tests for the model, phone validation, connectors, and UI
-- `templates/index.html`, `static/*` — responsive dashboard UI with the VoIP/Telephony card in the five-card order
+- `tests/` — model, phone, connector, executor, API and UI tests, including a second synthetic manufacturer profile
+- `templates/index.html`, `static/*` — responsive dashboard UI consuming only `UniversalModel` metric IDs
 - `requirements.txt`, `requirements-termux.txt` — dependencies
 - `run.sh` — simple desktop launcher
 - `install.sh` — universal Termux/Ubuntu installer + service setup (works via `curl | bash`)
 - `.gitignore` — keeps caches, venvs and logs out of git
 - `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png`, `static/favicon.png` — PWA assets derived from `icon-ont.png`
 - `docs/AUDIT_PHASE1.md` — Phase 1 architecture audit and phased migration plan
+- `docs/AUDIT_PHASE2.md` — Phase 2 integration evidence and physical-device acceptance criteria

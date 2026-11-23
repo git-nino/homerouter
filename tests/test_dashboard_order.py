@@ -36,22 +36,22 @@ class DashboardOrderTests(unittest.TestCase):
         self.assertNotIn("setBar(", self.script)
         self.assertNotIn(".bar i", self.styles)
 
-    def test_voip_card_comes_after_summary_and_before_wan(self):
-        summary_end = self.position('id="sModel"')
-        voip = self.position('id="voipPanel"')
-        wan = self.position('id="wanTable"')
-        self.assertLess(summary_end, voip)
-        self.assertLess(voip, wan)
-
-    def test_other_panels_keep_their_order(self):
+    def test_five_sections_are_in_requested_order(self):
         order = [
-            'id="wanTable"',
-            'id="systemTable"',
-            'id="deviceTable"',
-            'id="genericPanel"',
+            'id="speedPanel"',
+            'id="wanSection"',
+            'id="voipSection"',
+            'id="systemSection"',
+            'id="devicesSection"',
         ]
         positions = [self.position(item) for item in order]
         self.assertEqual(positions, sorted(positions))
+
+    def test_legacy_generic_panel_and_auth_mode_are_removed(self):
+        self.assertNotIn('id="genericPanel"', self.template)
+        self.assertNotIn("genericPanel", self.script)
+        self.assertNotIn('id="modeInput"', self.template)
+        self.assertNotIn("modeInput", self.script)
 
     def test_grid_columns_match_six_tiles(self):
         self.assertIn("repeat(3, minmax(0, 1fr))", self.styles)

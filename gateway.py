@@ -274,7 +274,7 @@ def _looks_successful(response):
 # Router client
 # --------------------------------------------------------------------------
 class RouterClient:
-    def __init__(self, host, username="user", password="user1234", mode="auto"):
+    def __init__(self, host, username="user", password="", mode="auto"):
         self.host = host
         self.username = username
         self.password = password

@@ -21,7 +21,7 @@ class UiPolishTests(unittest.TestCase):
         cls.manifest = (ROOT / "static" / "manifest.webmanifest").read_text(encoding="utf-8")
         cls.worker = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
         start = cls.template.find('<div class="card panel" id="voipPanel">')
-        end = cls.template.find("<!-- WAN + Optical -->")
+        end = cls.template.find("<!-- 4. System Information -->")
         cls.voip_block = cls.template[start:end]
 
     def test_speed_button_uses_ookla_label(self):
@@ -74,7 +74,7 @@ class UiPolishTests(unittest.TestCase):
         self.assertIn("favicon.png", self.template)
 
     def test_service_worker_cache_includes_favicon(self):
-        self.assertIn("gwmon-v5", self.worker)
+        self.assertIn("gwmon-v6", self.worker)
         self.assertIn("/static/favicon.png", self.worker)
 
 

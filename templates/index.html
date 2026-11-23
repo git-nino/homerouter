@@ -31,15 +31,23 @@
 </header>
 
 <main>
-  <!-- ================= LOGIN ================= -->
+  <!-- ================= DISCOVERY / CONNECT ================= -->
   <section id="loginView" class="login-wrap">
     <div class="card login-card">
       <div class="login-head">
         <div class="login-icon">◈</div>
         <div>
           <h1>Connect to gateway</h1>
-          <p class="muted">Credentials are prefilled — just press <strong>Enter</strong>.</p>
+          <p class="muted">Discovery runs first. Nothing authenticates until you press Connect.</p>
         </div>
+      </div>
+
+      <div id="discoveryBox" class="discovery-box">
+        <div class="discovery-title">Discovered profile</div>
+        <div class="discovery-row"><span>Device</span><strong id="detectedDevice">detecting…</strong></div>
+        <div class="discovery-row"><span>Profile</span><strong id="profileMatch">waiting for discovery</strong></div>
+        <div id="discoveryEvidence" class="discovery-evidence">Checking unauthenticated endpoints…</div>
+        <div id="credentialHint" class="discovery-evidence">No credential values are stored in this app.</div>
       </div>
 
       <form id="loginForm" autocomplete="on">
@@ -48,23 +56,20 @@
           <div class="input-wrap">
             <span class="input-icon">⇄</span>
             <input id="gatewayInput" name="gateway" type="text" inputmode="url"
-                   placeholder="192.168.1.1" value="192.168.1.1">
+                   placeholder="192.168.1.1">
           </div>
-          <small class="hint">Auto-detected from your network. Edit if needed.</small>
+          <small class="hint">Detected from your network. Edit if needed.</small>
         </div>
 
         <div class="field">
-          <label for="modeInput">Authentication mode</label>
+          <label for="profileInput">Connector profile</label>
           <div class="input-wrap">
-            <span class="input-icon">⚙</span>
-            <select id="modeInput" name="mode">
-              <option value="auto">Auto-detect (recommended)</option>
-              <option value="fiberhome">FiberHome / ONU (AES)</option>
-              <option value="plain">Plain-text login</option>
-              <option value="basic">HTTP Basic auth</option>
+            <span class="input-icon">◈</span>
+            <select id="profileInput" name="profile_id">
+              <option value="">Select a profile…</option>
             </select>
           </div>
-          <small class="hint">Auto tries each method and keeps the one that works.</small>
+          <small class="hint">Unknown firmware is never matched automatically. You can override a detected profile.</small>
         </div>
 
         <div class="field-row">
@@ -72,15 +77,16 @@
             <label for="userInput">Username</label>
             <div class="input-wrap">
               <span class="input-icon">◉</span>
-              <input id="userInput" name="username" type="text" value="user" autocomplete="username">
+              <input id="userInput" name="username" type="text" autocomplete="username"
+                     placeholder="Gateway username">
             </div>
           </div>
           <div class="field">
             <label for="passInput">Password</label>
             <div class="input-wrap">
               <span class="input-icon">✳</span>
-              <input id="passInput" name="password" type="password" value="user1234"
-                     autocomplete="current-password">
+              <input id="passInput" name="password" type="password"
+                     autocomplete="current-password" placeholder="Gateway password">
               <button type="button" id="showPass" class="eye" title="Show password">👁</button>
             </div>
           </div>
@@ -89,17 +95,17 @@
         <button id="loginBtn" type="submit" class="btn btn-primary btn-block">Connect →</button>
       </form>
       <div id="loginMsg" class="msg" role="status"></div>
-      <p class="footer-note">Local tool · nothing is sent anywhere except your gateway</p>
+      <p class="footer-note">Local tool · profile-driven · compatibility checked separately</p>
     </div>
   </section>
 
   <!-- ================= DASHBOARD ================= -->
   <section id="dashView" hidden>
 
-    <!-- speedtest panel -->
+    <!-- 1. Speed Test -->
     <div id="speedPanel" class="card speed-panel" hidden>
       <div class="panel-head">
-        <h2>⚡ Speedtest by Ookla</h2>
+        <h2>⚡ Speed Test · Speedtest by Ookla</h2>
         <span id="speedState" class="pill">idle</span>
       </div>
       <div id="speedIdle" class="speed-idle muted">Press <strong>Speedtest by Ookla</strong> above to measure download, upload and latency.</div>
@@ -116,7 +122,6 @@
       <div id="speedError" class="msg error" hidden></div>
     </div>
 
-    <!-- headline stat cards -->
     <div class="stat-grid" id="statGrid">
       <div class="card stat"><span class="stat-label">PUBLIC IP</span><span id="sPublicIp" class="stat-value accent">–</span><span id="sStatus" class="stat-sub">–</span></div>
       <div class="card stat"><span class="stat-label">UPTIME</span><span id="sUptime" class="stat-value">–</span><span class="stat-sub">system</span></div>
@@ -126,68 +131,70 @@
       <div class="card stat"><span class="stat-label">MODEL</span><span id="sModel" class="stat-value small">–</span><span id="sOperator" class="stat-sub">–</span></div>
     </div>
 
-    <!-- VoIP / Telephony -->
-    <div class="card panel" id="voipPanel">
-      <div class="panel-head">
-        <h2>☎️ VoIP / Telephony</h2>
-        <span id="voipState" class="pill warn">not loaded</span>
-      </div>
-      <div class="voip-row">
-        <div class="voip-identity">
-          <span class="metric-label">PHONE NUMBER</span>
-          <span id="voipPhone" class="voip-phone">–</span>
+    <!-- 2. WAN / Internet -->
+    <div id="wanSection" class="section" data-section="wan">
+      <div class="panel-grid">
+        <div class="card panel">
+          <div class="panel-head"><h2>🌐 Internet / WAN</h2><span id="wanStatusPill" class="pill">–</span></div>
+          <div class="table-wrap"><table class="kv" id="wanTable"></table></div>
         </div>
-        <button id="voipCallBtn" class="call-fab" type="button" hidden disabled
-                aria-label="Open phone dialer with the observed number"
-                title="Open phone dialer · not ONT SIP">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.5 0 1 .5 1 1V20c0 .6-.5 1-1 1-9.4 0-17-7.6-17-17 0-.6.5-1 1-1h3.5c.6 0 1 .5 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.3 1.1L6.6 10.8z"></path>
-          </svg>
-        </button>
+        <div class="card panel">
+          <div class="panel-head"><h2>🔦 Optical fiber / PON</h2><span id="ponPill" class="pill">–</span></div>
+          <div class="table-wrap"><table class="kv" id="ponTable"></table></div>
+        </div>
       </div>
     </div>
 
-    <!-- WAN + Optical -->
-    <div class="panel-grid">
-      <div class="card panel">
-        <div class="panel-head"><h2>🌐 Internet / WAN</h2><span id="wanStatusPill" class="pill">–</span></div>
-        <div class="table-wrap"><table class="kv" id="wanTable"></table></div>
-      </div>
-      <div class="card panel">
-        <div class="panel-head"><h2>🔦 Optical fiber / PON</h2><span id="ponPill" class="pill">–</span></div>
-        <div class="table-wrap"><table class="kv" id="ponTable"></table></div>
-      </div>
-    </div>
-
-    <!-- System + LAN + WiFi -->
-    <div class="panel-grid">
-      <div class="card panel">
-        <div class="panel-head"><h2>🖥️ System</h2></div>
-        <div class="table-wrap"><table class="kv" id="systemTable"></table></div>
-      </div>
-      <div class="card panel">
-        <div class="panel-head"><h2>🔌 LAN ports</h2></div>
-        <div class="table-wrap"><table class="kv" id="lanTable"></table></div>
-        <div class="panel-head sub"><h2>📶 Wireless SSIDs</h2></div>
-        <div id="ssidList" class="chip-list"></div>
+    <!-- 3. VoIP / Telephony -->
+    <div id="voipSection" class="section" data-section="voip">
+      <div class="card panel" id="voipPanel">
+        <div class="panel-head">
+          <h2>☎️ VoIP / Telephony</h2>
+          <span id="voipState" class="pill warn">not loaded</span>
+        </div>
+        <div class="voip-row">
+          <div class="voip-identity">
+            <span class="metric-label">PHONE NUMBER</span>
+            <span id="voipPhone" class="voip-phone">–</span>
+          </div>
+          <button id="voipCallBtn" class="call-fab" type="button" hidden disabled
+                  aria-label="Open phone dialer with the observed number"
+                  title="Open phone dialer · not ONT SIP">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M6.6 10.8c1.4 2.8 3.8 5.2 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.5 0 1 .5 1 1V20c0 .6-.5 1-1 1-9.4 0-17-7.6-17-17 0-.6.5-1 1-1h3.5c.6 0 1 .5 1 1 0 1.3.2 2.5.6 3.6.1.4 0 .8-.3 1.1L6.6 10.8z"></path>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
-    <!-- Devices -->
-    <div class="card panel">
-      <div class="panel-head"><h2>📱 Connected devices</h2><span id="deviceCount" class="pill">0</span></div>
-      <div class="table-wrap">
-        <table class="data-table" id="deviceTable">
-          <thead><tr><th>#</th><th>Hostname</th><th>IP address</th><th>MAC address</th><th>Link</th><th>Source</th><th>Client uptime</th></tr></thead>
-          <tbody></tbody>
-        </table>
+    <!-- 4. System Information -->
+    <div id="systemSection" class="section" data-section="system">
+      <div class="panel-grid">
+        <div class="card panel">
+          <div class="panel-head"><h2>🖥️ System Information</h2></div>
+          <div class="table-wrap"><table class="kv" id="systemTable"></table></div>
+        </div>
+        <div class="card panel">
+          <div class="panel-head"><h2>🔌 LAN ports</h2></div>
+          <div class="table-wrap"><table class="kv" id="lanTable"></table></div>
+          <div class="panel-head sub"><h2>📶 Wireless SSIDs</h2></div>
+          <div id="ssidList" class="chip-list"></div>
+        </div>
       </div>
     </div>
 
-    <!-- Generic routers: show whatever the device exposes -->
-    <div class="card panel" id="genericPanel" hidden>
-      <div class="panel-head"><h2>🧩 Discovered router data</h2><span id="profilePill" class="pill">generic</span></div>
-      <div id="genericContent" class="generic-grid"></div>
+    <!-- 5. Connected Devices -->
+    <div id="devicesSection" class="section" data-section="devices">
+      <div class="card panel">
+        <div class="panel-head"><h2>📱 Connected devices</h2><span id="deviceCount" class="pill">0</span></div>
+        <div class="table-wrap">
+          <table class="data-table" id="deviceTable">
+            <thead><tr><th>#</th><th>Hostname</th><th>IP address</th><th>MAC address</th><th>Link</th><th>Source</th><th>Client uptime</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <footer class="page-footer">Auto-refresh every 5 seconds · <span id="lastUpdate">–</span></footer>

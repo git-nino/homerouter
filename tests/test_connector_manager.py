@@ -136,7 +136,7 @@ class ConnectorCatalogTests(unittest.TestCase):
         connector = self.manager.get("fiberhome.hg6145f1")
         number_rules = [
             rule for rule in connector["extraction"]
-            if rule["metric"] == "voip.phone_number"
+            if rule.get("metric") == "voip.phone_number"
         ]
         self.assertEqual(len(number_rules), 3)
         for rule in number_rules:

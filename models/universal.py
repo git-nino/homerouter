@@ -51,6 +51,7 @@ METRICS: Dict[str, MetricSpec] = {
         _spec("device.firmware", Domain.DEVICE_IDENTITY, "Firmware", ValueType.STRING),
         _spec("device.hardware", Domain.DEVICE_IDENTITY, "Hardware version", ValueType.STRING),
         _spec("device.serial", Domain.DEVICE_IDENTITY, "Serial number", ValueType.STRING),
+        _spec("device.gpon_sn", Domain.DEVICE_IDENTITY, "GPON SN", ValueType.STRING),
         _spec("device.operator", Domain.DEVICE_IDENTITY, "Operator", ValueType.STRING),
         _spec("device.mac_base", Domain.DEVICE_IDENTITY, "Base MAC", ValueType.MAC_ADDRESS),
         _spec("device.mac_wan", Domain.DEVICE_IDENTITY, "WAN MAC", ValueType.MAC_ADDRESS),
@@ -231,6 +232,29 @@ class ConnectedDevice:
 
 
 @dataclass
+class Collection:
+    """A generic profile-defined list (LAN ports, SSIDs, future collections)."""
+
+    name: str
+    items: List[Dict[str, Any]] = field(default_factory=list)
+    loaded: bool = False
+    availability: Availability = Availability.NOT_LOADED
+    source: Optional[str] = None
+    error: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "items": [dict(item) for item in self.items],
+            "count": len(self.items) if self.loaded else None,
+            "loaded": self.loaded,
+            "availability": self.availability.value,
+            "source": self.source,
+            "error": self.error,
+        }
+
+
+@dataclass
 class VoipLine:
     """A telephony line plus its explicit native-dialer call action."""
 
@@ -268,7 +292,9 @@ class UniversalModel:
     )
     devices: List[ConnectedDevice] = field(default_factory=list)
     devices_loaded: bool = False
+    collections: Dict[str, Collection] = field(default_factory=dict)
     voip_lines: List[VoipLine] = field(default_factory=list)
+    endpoint_errors: List[Dict[str, Any]] = field(default_factory=list)
     updated_at: Optional[datetime] = None
 
     def __post_init__(self) -> None:
@@ -350,6 +376,52 @@ class UniversalModel:
                 error=error,
             )
 
+    def set_collection(
+        self,
+        name: str,
+        items: Optional[List[Dict[str, Any]]],
+        *,
+        loaded: bool = True,
+        source: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> Collection:
+        """Store a generic collection without ever inventing its contents."""
+
+        collection = Collection(
+            name=name,
+            items=list(items or []),
+            loaded=loaded,
+            availability=(
+                Availability.AVAILABLE if loaded
+                else Availability.ERROR if error
+                else Availability.NOT_LOADED
+            ),
+            source=source,
+            error=error,
+        )
+        self.collections[name] = collection
+        return collection
+
+    def get_collection(self, name: str) -> Collection:
+        """Return a collection; an absent list is explicitly NOT_LOADED."""
+
+        return self.collections.get(name, Collection(name=name))
+
+    def add_endpoint_error(
+        self,
+        endpoint_id: str,
+        *,
+        error: str,
+        source: Optional[str] = None,
+    ) -> None:
+        """Record an endpoint failure without fabricating metric values."""
+
+        self.endpoint_errors.append({
+            "endpoint": endpoint_id,
+            "source": source,
+            "error": error,
+        })
+
     def set_primary_voip_line(
         self,
         *,
@@ -426,7 +498,12 @@ class UniversalModel:
             },
             "devices": [device.to_dict() for device in self.devices],
             "devices_loaded": self.devices_loaded,
+            "collections": {
+                name: collection.to_dict()
+                for name, collection in sorted(self.collections.items())
+            },
             "voip_lines": [line.to_dict() for line in self.voip_lines],
             "call_action": self.primary_call_action().to_dict(),
+            "endpoint_errors": list(self.endpoint_errors),
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

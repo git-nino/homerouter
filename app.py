@@ -1,14 +1,24 @@
-"""Netdata-style FiberHome gateway monitor.
+"""Universal gateway monitor.
 
-Run with:  python app.py   (listens on 0.0.0.0:7000)
+Runtime data path: discovery -> ConnectorManager -> ConnectorExecutor ->
+UniversalModel -> dashboard. The legacy FiberHome view builder lives in
+``legacy_view.py`` only for regression comparison and is never used here.
 """
 
 import threading
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template, request
 
-from gateway import RouterClient, as_ip, detect_gateway, human_uptime, parse_voice_status
-from models.phone import build_call_action
+from connector_executor import (
+    AuthenticationError,
+    ConnectorExecutor,
+    ExecutorError,
+    SessionExpired,
+)
+from connector_manager import ConnectorManager
+from gateway import detect_gateway
+from models.enums import Availability, Domain
 
 try:
     import speedtest
@@ -20,12 +30,14 @@ app = Flask(__name__)
 # Single-tenant local tool: one active router session at a time.
 state = {
     "gateway": detect_gateway(),
-    "client": None,
-    "username": "user",
+    "discovery": None,
+    "manager": ConnectorManager(),
+    "executor": None,
+    "username": None,
     "credentials": None,
     "connected": False,
     "speedtest": {
-        "status": "idle",        # idle | running | done | error
+        "status": "idle",        # idle | starting | running | done | error
         "progress": "",
         "result": None,
         "error": None,
@@ -34,132 +46,139 @@ state = {
 _lock = threading.Lock()
 
 
-# --------------------------------------------------------------------------
-# View helpers
-# --------------------------------------------------------------------------
-def build_view(raw):
-    """Turn raw router JSON into display-ready values."""
-    base = raw.get("get_base_info", {}) or {}
-    wan_data = raw.get("get_allwan_info", {}) or {}
-    wan = (wan_data.get("wan") or [{}])[0]
-    lan = (raw.get("get_lan_status", {}) or {}).get("lan_status", {}) or {}
-    operator = raw.get("get_operator", {}) or {}
-    dongles = (raw.get("get_dongle_info", {}) or {}).get("dongle_info", []) or []
-    wifi = wan_data.get("wifi_obj_enable", {}) or {}
-    meta = raw.get("_meta", {}) or {}
-    voip = parse_voice_status(raw.get("get_voice_status", {}))
+CONFIDENCE_RANK = {"unknown": 0, "partial": 1, "exact": 2}
 
-    total = int(base.get("mem_total") or 0)
-    free = int(base.get("mem_free") or 0)
-    mem_pct = round((total - free) / total * 100, 1) if total else 0
 
-    devices = []
-    for item in lan.get("data", []) or []:
-        devices.append({
-            "host": item.get("HostName") or "unknown",
-            "ip": as_ip(item.get("IPAddress")),
-            "mac": item.get("MACAddress", ""),
-            "type": item.get("AccessType") or item.get("InterfaceType") or "-",
-            "source": item.get("AddressSource", ""),
-            "uptime": human_uptime(item.get("ClientUpTime", 0)),
-            "rssi": item.get("rssi", ""),
-            "active": item.get("Active") == "1",
-        })
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat()
 
-    ssids = [
-        wifi.get(f"ssid{i}") for i in range(1, 17)
-        if wifi.get(f"ConfigActive{i}") == "1" and wifi.get(f"ssid{i}")
-    ]
 
+def _safe_credential_suggestion(manager, key):
+    if not key:
+        return {
+            "label": "User-supplied credentials",
+            "username_source": "user_input",
+            "password_source": "user_input",
+            "requires_user_confirmation": True,
+            "provenance": "No credential values are stored in this repository.",
+        }
+    suggestion = manager.credential_suggestion(key) or {}
     return {
-        "meta": meta,
-        "profile": meta.get("profile", ""),
-        "is_fiberhome": bool(base.get("ModelName") or wan.get("ExternalIPAddress")),
-        "generic": raw.get("generic", []),
-        "device": {
-            "manufacturer": base.get("Manufacturer", ""),
-            "model": base.get("ModelName", ""),
-            "hardware": base.get("HardwareVersion", ""),
-            "software": base.get("SoftwareVersion", ""),
-            "serial": base.get("SerialNumber", ""),
-            "gpon_sn": base.get("gponsn", ""),
-            "oui": base.get("ManufacturerOUI", ""),
-            "operator": operator.get("operator_name", ""),
-            "operator_code": operator.get("operators_code", ""),
-            "base_mac": base.get("brmac", ""),
-            "wan_mac": wan.get("MACAddress", ""),
-            "os": base.get("os_version", ""),
-            "compiled": base.get("compile_time", ""),
-        },
-        "internet": {
-            "public_ip": as_ip(wan.get("ExternalIPAddress")),
-            "gateway": as_ip(wan.get("RemoteIPAddress")),
-            "dns": as_ip(wan.get("DNSServers")),
-            "type": wan.get("ConnectionType", ""),
-            "status": wan.get("ConnectionStatus", ""),
-            "name": wan.get("Name", ""),
-            "vlan": wan.get("vlanid", ""),
-            "pppoe_user": wan.get("Username", ""),
-            "mtu": wan.get("mtu", ""),
-            "nat": "Enabled" if str(wan.get("NATEnabled")) == "1" else "Disabled",
-            "uptime": human_uptime(wan.get("Uptime", 0)),
-            "uptime_raw": wan.get("Uptime", "0"),
-            "error": wan.get("LastConnectionError", ""),
-        },
-        "voip": voip,
-        "call_action": build_call_action(voip["phone_number"]).to_dict(),
-        "system": {
-            "uptime": human_uptime(base.get("uptime", 0)),
-            "uptime_raw": base.get("uptime", "0"),
-            "cpu": base.get("cpu_usage", "0"),
-            "memory": mem_pct,
-            "flash": base.get("flash_usage", "0"),
-            "lan_ports": base.get("lan_port_num", ""),
-            "uplink": base.get("uplink_mode", ""),
-        },
-        "optical": {
-            "mode": base.get("WANAccessType", ""),
-            "tx": base.get("txpower", ""),
-            "rx": base.get("rxpower", ""),
-            "temperature": base.get("transceivertemperature", ""),
-            "current": base.get("biascurrent", ""),
-            "voltage": base.get("supplyvottage", ""),
-            "onu_id": base.get("onu_id", ""),
-            "vendor": base.get("vendor", ""),
-            "reg_state": base.get("pon_reg_state", ""),
-            "auth": base.get("authStatus", ""),
-            "loid": base.get("loid_name", ""),
-            "bytes_sent": base.get("ponBytesSent", ""),
-            "bytes_recv": base.get("ponBytesReceived", ""),
-            "packets_sent": base.get("ponPacketsSent", ""),
-            "packets_recv": base.get("ponPacketsReceived", ""),
-        },
-        "lan_ports": [
-            {"port": f"LAN{i}", "status": base.get(f"lan_status_{i}", "-")}
-            for i in range(1, int(base.get("lan_port_num") or 4) + 1)
-        ],
-        "devices": devices,
-        "ssids": ssids,
-        "dongles": [
-            {"index": d.get("dongle_index"), "status": d.get("Status")}
-            for d in dongles
-        ],
-        "ipv6": (raw.get("get_ipv6_lan", {}) or {}).get("lan_ipv6", {}) or {},
+        "key": key,
+        "label": suggestion.get("label", "User-supplied credentials"),
+        "username_source": suggestion.get("username_source", "user_input"),
+        "password_source": suggestion.get("password_source", "user_input"),
+        "requires_user_confirmation": suggestion.get(
+            "requires_user_confirmation", True
+        ),
+        "provenance": suggestion.get(
+            "provenance", "No credential values are stored in this repository."
+        ),
     }
 
 
+def run_discovery(force=False):
+    """Detect the gateway, run unauthenticated probes, and match a profile."""
+
+    with _lock:
+        manager = state["manager"]
+        previous = state["discovery"]
+        current = state["gateway"]
+
+    if (
+        not force
+        and previous
+        and previous.get("gateway") == current.get("gateway")
+        and previous.get("detected") == current.get("detected")
+    ):
+        return previous
+
+    detected = detect_gateway()
+    with _lock:
+        state["gateway"] = detected
+    host = detected.get("gateway", "")
+
+    candidates = []
+    profile_rows = []
+    probe_errors = []
+    for profile in manager.enabled_connectors():
+        profile_rows.append({
+            "id": profile.get("id"),
+            "display_name": profile.get("display_name"),
+            "status": profile.get("status"),
+            "identification_confidence": (
+                profile.get("identification") or {}
+            ).get("confidence", "unknown"),
+            "capabilities": list(profile.get("capabilities") or []),
+            "device_compatibility": "not_evaluated",
+        })
+        try:
+            executor = ConnectorExecutor(profile, host, {}, manager=manager)
+            probe = executor.discover()
+        except ExecutorError as exc:
+            probe_errors.append(f"{profile.get('id')}: {exc}")
+            continue
+        probe_errors.extend(probe.get("errors", []))
+        identification = manager.identify(
+            probe["observations"], phase="pre_auth", connector_id=profile.get("id")
+        )
+        if not identification["matches"]:
+            continue
+        weight = sum(
+            int(match.get("weight") or 0)
+            for match in (profile.get("identification") or {}).get("rules", [])
+            if isinstance(match, dict)
+        )
+        candidates.append((weight, profile, identification))
+
+    selected = None
+    detected_device = None
+    confidence = "unknown"
+    evidence = (
+        "Unknown firmware: no pre-authentication rule matched a known connector profile."
+    )
+    if candidates:
+        weight, profile, identification = max(candidates, key=lambda item: item[0])
+        if not identification["ambiguous"]:
+            selected = profile.get("id")
+            confidence = identification["confidence"]
+            match = identification["matches"][0]
+            detected_device = str(match.get("value", "")) or None
+            evidence = match.get("evidence") or "Matched a profile identification rule."
+
+    credential_key = None
+    if selected:
+        credential_key = ((manager.get(selected) or {}).get("auth") or {}).get(
+            "credential_suggestion_key"
+        )
+
+    result = {
+        "gateway": host,
+        "detected": bool(detected.get("detected")),
+        "detected_device": detected_device,
+        "selected_profile": selected,
+        "identification_confidence": confidence,
+        "evidence": evidence,
+        "credential_suggestion": _safe_credential_suggestion(manager, credential_key),
+        "profiles": profile_rows,
+        "discovery_errors": probe_errors,
+        "physical_device_check_required": True,
+    }
+    with _lock:
+        state["discovery"] = result
+    return result
+
+
 # --------------------------------------------------------------------------
-# Speedtest worker
+# Speedtest worker — local measurement injected into the universal model
 # --------------------------------------------------------------------------
 SPEEDTEST_TIMEOUT = 120  # seconds — speedtest-cli can hang on some networks
 _speed_token = 0
 
 
 def _speed_worker(token):
-    """Run speedtest-cli in the background with a hard timeout.
+    """Run speedtest-cli in the background with a hard timeout."""
 
-    The token guards against a stale worker overwriting a newer test result.
-    """
     finished = threading.Event()
 
     def update(**kwargs):
@@ -176,19 +195,21 @@ def _speed_worker(token):
                         status="error", progress="", result=None,
                         error=(f"Speedtest timed out after {SPEEDTEST_TIMEOUT}s. "
                                "Check your internet connection and try again."),
+                        completed_at=_utc_now(),
                     )
                     state["speedtest"]["token"] = None   # invalidate the worker
 
     threading.Thread(target=watchdog, daemon=True).start()
 
     if speedtest is None:
-        update(status="error", error="speedtest-cli is not installed.", progress="")
+        update(status="error", error="speedtest-cli is not installed.", progress="",
+               completed_at=_utc_now())
         finished.set()
         return
 
     try:
         update(status="running", progress="Finding the closest test server…",
-               result=None, error=None)
+               result=None, error=None, started_at=_utc_now())
         client = speedtest.Speedtest()
         client.get_best_server()
 
@@ -203,6 +224,7 @@ def _speed_worker(token):
         update(
             status="done",
             progress="",
+            completed_at=_utc_now(),
             result={
                 "download": round(down, 2),
                 "upload": round(up, 2),
@@ -214,9 +236,58 @@ def _speed_worker(token):
             },
         )
     except Exception as exc:                            # pragma: no cover
-        update(status="error", progress="", error=str(exc))
+        update(status="error", progress="", error=str(exc), completed_at=_utc_now())
     finally:
         finished.set()
+
+
+def _apply_speedtest_to_model(model, speed):
+    """Expose local speedtest results through the universal model only."""
+
+    status = speed.get("status", "idle")
+    model.set_metric(
+        Domain.SPEED_TEST, "speed_test.status", value=status,
+        availability=Availability.AVAILABLE, source="local_speedtest",
+    )
+    result = speed.get("result") if status == "done" else None
+    metric_map = {
+        "download": "speed_test.download_mbps",
+        "upload": "speed_test.upload_mbps",
+        "ping": "speed_test.ping_ms",
+        "jitter": "speed_test.jitter_ms",
+        "server": "speed_test.server",
+        "sponsor": "speed_test.sponsor",
+        "country": "speed_test.country",
+    }
+    for source_key, metric_id in metric_map.items():
+        if result and result.get(source_key) not in (None, ""):
+            model.set_metric(
+                Domain.SPEED_TEST, metric_id, value=result[source_key],
+                availability=Availability.AVAILABLE, source="local_speedtest",
+            )
+        else:
+            model.set_metric(
+                Domain.SPEED_TEST, metric_id, value=None,
+                availability=(Availability.ERROR if speed.get("error") and status == "error"
+                              else Availability.NOT_LOADED),
+                source="local_speedtest", error=speed.get("error"),
+            )
+    for timestamp_id, key in (
+        ("speed_test.started_at", "started_at"),
+        ("speed_test.completed_at", "completed_at"),
+    ):
+        if speed.get(key):
+            model.set_metric(
+                Domain.SPEED_TEST, timestamp_id, value=speed[key],
+                availability=Availability.AVAILABLE, source="local_speedtest",
+            )
+    if status == "error" and speed.get("error"):
+        model.set_metric(
+            Domain.SPEED_TEST, "speed_test.error", value=None,
+            availability=Availability.ERROR, source="local_speedtest",
+            error=speed["error"],
+        )
+    return model
 
 
 # --------------------------------------------------------------------------
@@ -233,98 +304,122 @@ def api_gateway():
         return jsonify(state["gateway"])
 
 
+@app.route("/api/discovery")
+def api_discovery():
+    return jsonify(run_discovery())
+
+
 @app.route("/api/session")
 def api_session():
     with _lock:
-        client = state["client"]
+        executor = state["executor"]
         return jsonify({
-            "connected": state["connected"] and client is not None,
+            "connected": state["connected"] and executor is not None,
             "gateway": state["gateway"].get("gateway"),
-            "profile": getattr(client, "profile", None) if client else None,
+            "profile": getattr(executor, "profile_id", None) if executor else None,
+            "physical_device_check_required": True,
         })
 
 
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     payload = request.get_json(silent=True) or {}
-    username = (payload.get("username") or "user").strip()
-    password = payload.get("password") or "user1234"
-    mode = (payload.get("mode") or "auto").strip()
-    host = (payload.get("gateway") or "").strip()
+    profile_id = str(payload.get("profile_id") or "").strip()
+    username = str(payload.get("username") or "").strip()
+    password = payload.get("password")
+    host = str(payload.get("gateway") or "").strip()
 
-    if not host:
-        with _lock:
-            host = state["gateway"]["gateway"]
-        detected = detect_gateway()
-        if detected["detected"]:
-            host = detected["gateway"]
-            with _lock:
-                state["gateway"] = detected
-
-    client = RouterClient(host, username=username, password=password, mode=mode)
-    ok, message = client.login()
-
-    # Convenience for the verified default on FiberHome models when the user
-    # simply pressed Enter with the pre-filled short password.
-    if not ok and mode == "auto" and password == "user1234":
-        ok, _ = client.login(password="user123456")
-        if ok:
-            message = "Connected (using verified default password user123456)."
-
-    if not ok:
-        return jsonify({"ok": False, "message": message}), 401
+    if not profile_id:
+        return jsonify({
+            "ok": False,
+            "message": "Select a connector profile before connecting.",
+        }), 400
+    if not username:
+        return jsonify({"ok": False, "message": "Enter the gateway username."}), 400
+    if password is None:
+        return jsonify({"ok": False, "message": "Enter the gateway password."}), 400
 
     with _lock:
-        state["client"] = client
+        manager = state["manager"]
+    profile = manager.get(profile_id)
+    if profile is None or not profile.get("enabled", True):
+        return jsonify({"ok": False, "message": "The selected profile is not available."}), 400
+
+    if not host:
+        host = run_discovery().get("gateway", "")
+
+    executor = ConnectorExecutor(
+        profile, host,
+        credentials={"username": username, "password": password},
+        manager=manager,
+    )
+    try:
+        connected = executor.connect()
+    except (AuthenticationError, ExecutorError):
+        return jsonify({
+            "ok": False,
+            "message": "Authentication failed for the selected profile. "
+                       "Check the credentials and connector selection.",
+            "profile_id": profile_id,
+        }), 401
+
+    with _lock:
+        state["executor"] = executor
         state["username"] = username
         state["credentials"] = {
-            "username": username, "password": client.password, "mode": mode,
+            "username": username,
+            "profile_id": profile_id,
         }
         state["connected"] = True
         state["gateway"] = {
             "gateway": host,
-            "model": (client.get("get_device_name") or {}).get("ModelName", ""),
+            "model": (state.get("discovery") or {}).get("detected_device") or "",
             "detected": True,
         }
-    return jsonify({"ok": True, "message": message, "gateway": host})
+    return jsonify({
+        "ok": True,
+        "message": f"Connected with profile {connected['display_name']}.",
+        "gateway": host,
+        "profile_id": profile_id,
+        "physical_device_check_required": True,
+    })
 
 
 @app.route("/api/data")
 def api_data():
     with _lock:
-        client = state["client"]
+        executor = state["executor"]
         connected = state["connected"]
-    if not connected or client is None:
+        speed = dict(state["speedtest"])
+    if not connected or executor is None:
         return jsonify({"error": "Not connected"}), 401
     try:
-        raw = client.collect()
-        if not raw.get("_meta", {}).get("session_valid"):
-            # Router sessions expire after a few minutes — reconnect silently.
-            ok, _ = client.login()
-            if ok:
-                raw = client.collect()
-        if not raw.get("_meta", {}).get("session_valid"):
-            with _lock:
-                state["connected"] = False
-            return jsonify({"error": "Router session expired. Please reconnect."}), 401
-    except Exception as exc:                            # pragma: no cover
+        model = executor.collect()
+    except SessionExpired:
+        with _lock:
+            state["connected"] = False
+            state["executor"] = None
+            state["credentials"] = None
+        return jsonify({"error": "Router session expired. Please reconnect."}), 401
+    except (AuthenticationError, ExecutorError) as exc:
         return jsonify({"error": str(exc)}), 502
-    return jsonify(build_view(raw))
+    return jsonify(_apply_speedtest_to_model(model, speed).to_dict())
 
 
 @app.route("/api/disconnect", methods=["POST"])
 def api_disconnect():
     with _lock:
-        client = state["client"]
-        state["client"] = None
+        executor = state["executor"]
+        state["executor"] = None
         state["credentials"] = None
+        state["username"] = None
         state["connected"] = False
 
     router_logout = True
-    if client is not None:
+    if executor is not None:
         try:
-            router_logout, _ = client.logout()
-        except Exception:                                # pragma: no cover
+            router_logout = executor.logout()
+        except ExecutorError:                            # pragma: no cover
             router_logout = False
 
     return jsonify({
@@ -348,7 +443,9 @@ def api_speedtest_start():
         token = _speed_token
         state["speedtest"] = {
             "status": "starting", "progress": "Starting…",
-            "result": None, "error": None, "token": token,
+            "result": None, "error": None,
+            "started_at": _utc_now(), "completed_at": None,
+            "token": token,
         }
     threading.Thread(target=_speed_worker, args=(token,), daemon=True).start()
     return jsonify({"ok": True})
@@ -363,5 +460,5 @@ def api_speedtest_status():
 
 
 if __name__ == "__main__":
-    print("FiberHome Gateway Monitor → http://0.0.0.0:7000")
+    print("Homerouter universal gateway monitor → http://0.0.0.0:7000")
     app.run(host="0.0.0.0", port=7000, debug=False, threaded=True)

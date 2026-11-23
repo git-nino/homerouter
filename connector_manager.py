@@ -29,7 +29,8 @@ DEFAULT_CREDENTIALS = ROOT / "config" / "default_credentials.json"
 DEFAULT_SCHEMA = ROOT / "config" / "connector.schema.json"
 
 EXTRACTION_METHODS = {
-    "json_path", "xpath", "css", "regex", "header", "literal", "list_length",
+    "json_path", "json_path_multi", "xpath", "css", "regex", "header",
+    "literal", "list_length", "list_objects", "keyed_objects",
 }
 SUPPORTED_TRANSFORMS = {
     "strip",
@@ -39,6 +40,7 @@ SUPPORTED_TRANSFORMS = {
     "number",
     "split_before_at",
     "voip_status_label",
+    "used_percent",
 }
 CONDITION_OPERATORS = {"equals", "not_equals", "contains", "prefix", "regex"}
 ID_OPERATORS = {"equals", "not_equals", "contains", "prefix", "regex"}
@@ -260,6 +262,11 @@ class SchemaValidator:
                     issues.extend(self._walk(item, item_schema, f"{path}[{index}]"))
 
         if isinstance(value, dict):
+            if len(value) < schema.get("minProperties", 0):
+                issues.append(ValidationIssue(
+                    "error", "minProperties", path,
+                    f"must contain at least {schema['minProperties']} property/properties",
+                ))
             properties = _as_dict(schema.get("properties"))
             for key in schema.get("required", []):
                 if key not in value:
@@ -595,6 +602,12 @@ class ConnectorManager:
             ))
 
         endpoint_ids = _endpoint_ids(connector)
+        logout_endpoint = auth.get("logout_endpoint")
+        if logout_endpoint and logout_endpoint not in endpoint_ids:
+            issues.append(ValidationIssue(
+                "error", "unknown_logout_endpoint", f"{base}.auth.logout_endpoint",
+                f"references unknown endpoint '{logout_endpoint}'",
+            ))
         seen_flow_ids: Set[str] = set()
         seen_orders: Set[int] = set()
         for index, flow in enumerate(_as_list(auth.get("flows"))):
@@ -648,18 +661,43 @@ class ConnectorManager:
                     f"unsupported extraction method {method!r}",
                 ))
             metric = rule.get("metric")
-            if metric not in METRICS:
+            collection = rule.get("collection")
+            if not metric and not collection:
+                issues.append(ValidationIssue(
+                    "error", "missing_extraction_target", path,
+                    "an extraction rule needs either 'metric' or 'collection'",
+                ))
+            if metric and collection:
+                issues.append(ValidationIssue(
+                    "error", "ambiguous_extraction_target", path,
+                    "an extraction rule cannot target both a metric and a collection",
+                ))
+            if metric and metric not in METRICS:
                 issues.append(ValidationIssue(
                     "error", "unknown_metric", f"{path}.metric",
                     f"metric '{metric}' is not in the universal model",
                 ))
-            else:
+            elif metric:
                 domain = METRICS[metric].domain.value
                 if domain not in capabilities:
                     issues.append(ValidationIssue(
                         "error", "missing_capability", f"{path}.metric",
                         f"metric '{metric}' needs capability '{domain}'",
                     ))
+            if collection in ("devices", "lan_ports", "ssids"):
+                required_domain = (
+                    "connected_devices" if collection == "devices" else "system"
+                )
+                if required_domain not in capabilities:
+                    issues.append(ValidationIssue(
+                        "error", "missing_capability", f"{path}.collection",
+                        f"collection '{collection}' needs capability '{required_domain}'",
+                    ))
+            if method in ("list_objects", "keyed_objects") and not _as_dict(rule.get("item_fields")):
+                issues.append(ValidationIssue(
+                    "error", "missing_item_fields", f"{path}.item_fields",
+                    f"{method} requires an item_fields map",
+                ))
             endpoint_id = rule.get("endpoint")
             if endpoint_id not in endpoint_ids:
                 issues.append(ValidationIssue(
@@ -685,10 +723,19 @@ class ConnectorManager:
                         f"{path}.transforms[{transform_index}]",
                         f"unsupported transform {transform!r}",
                     ))
+            for transform_name in _as_dict(rule.get("transform_options")):
+                if transform_name not in SUPPORTED_TRANSFORMS:
+                    issues.append(ValidationIssue(
+                        "error", "unknown_transform", f"{path}.transform_options",
+                        f"options supplied for unsupported transform {transform_name!r}",
+                    ))
             conditions: List[Tuple[str, Dict[str, Any]]] = []
             when = _as_dict(rule.get("when"))
             if when:
                 conditions.append((f"{path}.when", when))
+            item_filter = _as_dict(rule.get("filter"))
+            if item_filter:
+                conditions.append((f"{path}.filter", item_filter))
             for condition_index, condition in enumerate(_as_list(rule.get("when_all"))):
                 if isinstance(condition, dict):
                     conditions.append(
@@ -844,6 +891,8 @@ class ConnectorManager:
                     "rule_id": rule.get("id"),
                     "confidence": rule.get("confidence", "unknown"),
                     "phase": rule.get("phase"),
+                    "field": rule.get("field"),
+                    "value": rule.get("value"),
                     "evidence": rule.get("evidence", ""),
                 })
 

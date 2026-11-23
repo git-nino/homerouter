@@ -18,24 +18,29 @@ First run creates `~/.venvs/gwmon` and installs `flask`, `requests`,
 
 ## Use
 
-1. On load the app detects the gateway IP, runs **unauthenticated** discovery
-   endpoints, and displays the observed device, matching profile, evidence and
-   credential provenance. No authentication happens at this stage.
-2. Enter your own username and password, confirm or override the suggested
-   connector profile, then press **Connect**. The selected profile — not a
-   hardcoded branch in `app.py` — determines the authentication flow and
-   endpoints. Unknown firmware leaves the profile unselected.
-3. The dashboard auto-refreshes every 5 seconds. Summary tiles appear in this
-   order: Public IP, Uptime, Optical TX, Optical RX, Devices, Model. The five
-   sections are Speed Test, WAN/Internet, VoIP/Telephony, System Information and
-   Connected Devices. Missing readings show an explicit state instead of `0`.
-4. The Call button appears only when a validated phone number is available and
+1. On load the app detects the gateway IP and runs **unauthenticated**
+   identification requests internally. The login screen stays simple: gateway
+   address, username, password visibility toggle and **Connect**. No connector
+   details, manufacturer information or discovery evidence are shown.
+2. Gateway, username and password are pre-filled from the configured credential
+   suggestion (retaining the previous dashboard's editable defaults) and can all
+   be changed. Nothing authenticates until **Connect** is pressed; the backend
+   then selects the connector internally and uses its authentication flow.
+3. If the gateway cannot be identified, the app shows: "Unsupported or
+   unidentified gateway. This device does not yet have a compatible connector
+   profile." It does not try random authentication methods.
+4. The previous dashboard presentation is restored: Speedtest panel, six summary
+   tiles, VoIP/Telephony card, Internet/WAN and Optical panels, System/LAN/WiFi
+   panels, Connected devices, and the 5-second auto-refresh footer. Missing
+   readings show an explicit state instead of `0`; a failed refresh keeps the
+   last valid values and marks the footer as stale.
+5. The Call button appears only when a validated phone number is available and
    opens your phone's dialer after a tap; the app never places a call itself.
-5. Tap **Speedtest by Ookla** to run a local download / upload / latency test
+6. Tap **Speedtest by Ookla** to run a local download / upload / latency test
    (uses `speedtest-cli`; results are injected into the `speed_test` domain of
    the universal model).
-6. **Disconnect** clears the local session and sends the profile's logout
-   endpoint when one is defined.
+7. **Disconnect** clears the local session and sends the selected connector's
+   logout endpoint when one is defined.
 
 ## One-command install (Termux or Ubuntu)
 
@@ -101,6 +106,21 @@ evaluates code. `legacy_view.py` is kept only for regression comparison and is
 not imported by `app.py`. See `docs/AUDIT_PHASE2.md` for evidence and the
 remaining physical-device check.
 
+## Restored dashboard and internal connector selection
+
+The dashboard UI is the actual pre-universal implementation from Git commit
+`3bd1d55` (the last UI commit before the runtime change). The template and
+stylesheet were restored byte-for-byte, except that the obsolete authentication
+mode selector and generic-data panel were removed. Only the JavaScript data
+binding changed: every widget now reads canonical `UniversalModel` metric IDs
+and availability states.
+
+Connector identification is backend-only. `/api/login-defaults` performs
+unauthenticated discovery, resolves a connector internally, and returns only the
+gateway address and editable credential defaults. The browser never sends or
+displays a profile ID. `/api/data` strips internal `profile_id` and compatibility
+details from the public payload.
+
 ## Connector catalog (Phase 3)
 
 Connector definitions live in `config/connectors.json`. They describe only
@@ -121,10 +141,12 @@ python -m tools.connector_builder create --id vendor.model --display-name "Vendo
   --output config/connectors.json
 ```
 
-`config/default_credentials.json` contains safe *suggestions* and provenance
-only. It never stores credential values, and every suggestion requires explicit
-user confirmation. No network authentication happens automatically after
-discovery.
+`config/default_credentials.json` contains the editable pre-fill values retained
+from the previous dashboard, their provenance, and one known FiberHome fallback
+password used only when the unchanged default was submitted. These are
+convenience defaults, not stored secrets; no values are copied into connector
+profiles, logs or success messages. No network authentication happens
+automatically after discovery.
 
 ## Tests
 
@@ -142,7 +164,7 @@ python3 -m unittest discover -s tests -v
 - `auth_handlers.py` — controlled auth registry; no profile text is executed as code
 - `legacy_view.py` — legacy comparison builder only; never used by the live app
 - `config/connectors.json`, `config/connector.schema.json` — connector profiles and their JSON schema
-- `config/default_credentials.json` — secret-free credential suggestions with provenance
+- `config/default_credentials.json` — editable credential pre-fill values, fallback and provenance
 - `tools/connector_builder.py` — `create`, `validate`, and `list` CLI
 - `tests/` — model, phone, connector, executor, API and UI tests, including a second synthetic manufacturer profile
 - `templates/index.html`, `static/*` — responsive dashboard UI consuming only `UniversalModel` metric IDs
@@ -150,6 +172,7 @@ python3 -m unittest discover -s tests -v
 - `run.sh` — simple desktop launcher
 - `install.sh` — universal Termux/Ubuntu installer + service setup (works via `curl | bash`)
 - `.gitignore` — keeps caches, venvs and logs out of git
-- `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png`, `static/favicon.png` — PWA assets derived from `icon-ont.png`
+- `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png`, `static/favicon.png`, `static/dashboard-icons-router.svg` — locally served PWA assets from Dashboard Icons `router` (see `docs/ICON_ATTRIBUTION.md`)
 - `docs/AUDIT_PHASE1.md` — Phase 1 architecture audit and phased migration plan
 - `docs/AUDIT_PHASE2.md` — Phase 2 integration evidence and physical-device acceptance criteria
+- `docs/ICON_ATTRIBUTION.md` — selected Dashboard Icons asset, source URL and license

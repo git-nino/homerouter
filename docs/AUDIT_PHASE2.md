@@ -3,57 +3,81 @@
 ## Goal
 
 Make the JSON connector catalog the **live** data path and make `UniversalModel`
-the only contract between collection and the dashboard.
+the only contract between collection and the dashboard, while keeping the
+previous dashboard's presentation and a simple login experience.
 
 The implemented flow is:
 
 ```
 Gateway detection
-  → Device identification (unauthenticated discovery)
+  → Internal unauthenticated identification
   → ConnectorManager
   → config/connectors.json
   → ConnectorExecutor
   → authentication handlers + HTTP requests
   → profile-driven extraction/transforms/validation
   → UniversalModel
-  → unified dashboard
+  → restored dashboard
 ```
+
+## Restored UI source
+
+The visual UI was restored from Git commit **`3bd1d55`**, the last commit before
+the universal-runtime dashboard rewrite. `templates/index.html` and
+`static/style.css` were copied from that commit. The only template removals are
+the obsolete `modeInput` authentication-mode selector and the `genericPanel`
+raw-data panel. The CSS is byte-for-byte identical to `3bd1d55`.
+
+`static/app.js` keeps the restored DOM, event behavior, speedtest panel, refresh
+interval and call-button interaction, but its data binding was replaced with
+canonical `UniversalModel` metric IDs and availability states. Connector
+profiles, discovery evidence, compatibility messages and manufacturer details
+were removed from the user interface.
 
 ## Files changed or added
 
-| File | Role in Phase 2 |
+| File | Role in Phase 2 / restoration |
 |---|---|
-| `app.py` | Replaced `RouterClient`/`build_view()` with discovery, profile-driven connect/data/disconnect APIs and serialized `UniversalModel`. Local speedtest results are injected into the `speed_test` domain. |
-| `auth_handlers.py` | Controlled auth registry (`none`, `http_basic`, `http_digest`, `form`, `session`, `token`, `fiberhome_aes`). The FiberHome handler delegates encryption to `gateway.fhencrypt`; profile text is never evaluated as code. |
-| `connector_executor.py` | Loads an enabled profile, orders endpoint dependencies, resolves literal/user/state/derived/seed/endpoint values, issues GET/POST with query/header/body, parses JSON, applies extraction methods and transforms, records endpoint errors, derives collections/counts/call actions, validates values, handles session expiry and logs out explicitly. |
+| `app.py` | Discovery, internal connector selection, simple `/api/login-defaults`, profile-driven connect/data/disconnect APIs and serialized `UniversalModel`. Public payload strips `profile_id` and compatibility details. No vendor-specific normalization. |
+| `auth_handlers.py` | Controlled auth registry (`none`, `http_basic`, `http_digest`, `form`, `session`, `token`, `fiberhome_aes`). The FiberHome handler delegates AES encryption to `gateway.fhencrypt`; profile text is never evaluated as code. |
+| `connector_executor.py` | Loads an enabled profile, orders endpoint dependencies, resolves dynamic values, issues GET/POST with query/header/body, parses JSON, applies extraction and transforms, records endpoint errors, derives collections/counts/call actions, validates values, handles session expiry and logs out explicitly. |
 | `legacy_view.py` | Historical FiberHome `build_view()` moved here **only** for regression comparison; it is not imported by `app.py` or the dashboard. |
-| `connector_manager.py` | Identification rules now carry their field/value, supporting discovery display and profile suggestions. |
-| `models/universal.py` | Added `device.gpon_sn`, generic `collections`, `endpoint_errors`, `set_collection()`/`get_collection()`/`add_endpoint_error()`, and serialization for all of them. |
-| `config/connector.schema.json` | Added runtime profile fields: logout endpoint, session validity, collection extraction, item fields, filters, ranges, transform options, defaults and fallbacks. |
-| `config/connectors.json` | FiberHome profile now includes runtime endpoints, AES auth, role-derived logout, collections, system/optical/VoIP extraction and validation. No secret values are stored. |
-| `templates/index.html`, `static/app.js`, `static/style.css`, `static/sw.js` | Discovery/profile UI, five normalized dashboard sections, explicit availability states, validated native-dialer call action, removal of auth-mode/generic-panel legacy paths, cache bump to `gwmon-v6`. |
-| `tests/fixtures.py`, `tests/test_connector_executor.py`, `tests/test_generic_dashboard.py` | Integration coverage for a second synthetic manufacturer, executor behavior, API rendering, discovery and static-contract checks. |
-| `tests/test_app_voice.py`, `tests/test_dashboard_order.py`, `tests/test_ui_polish.py` | Updated for legacy comparison only and the normalized UI/cache contract. |
+| `connector_manager.py` | Catalog validation, identification scoring and credential-suggestion lookup. |
+| `models/universal.py` | Normalized seven-domain model with explicit availability states, collections, endpoint errors and safe dialer actions. |
+| `config/connector.schema.json` | Runtime profile contract, including logout, session validity, collections, transforms and fallbacks. |
+| `config/connectors.json` | FiberHome runtime profile. No credential values are stored. |
+| `config/default_credentials.json` | Editable pre-fill values retained from the pre-universal UI (`user` / `user1234`), the known FiberHome fallback (`user123456`) and provenance. These are convenience defaults, not stored secrets. |
+| `templates/index.html`, `static/style.css` | Restored from `3bd1d55`, minus the obsolete auth-mode selector and generic panel. |
+| `static/app.js` | Restored interactions with universal-model data binding, stale refresh messaging and a profile-free login payload. |
+| `static/sw.js`, `static/manifest.webmanifest` | Cache bumped to `gwmon-v7`; local PWA icon references. |
+| `static/dashboard-icons-router.svg`, `static/icon-*.png`, `static/favicon.png`, `docs/ICON_ATTRIBUTION.md` | Locally served Dashboard Icons `router` icon and attribution. |
+| `tests/` | Expanded executor, API, login, restored-UI, icon and second-manufacturer integration coverage. |
 | `README.md`, this document | Updated usage and runtime documentation. |
 
 ## Behavioral guarantees
 
-- Discovery runs only endpoints marked `auth: false`. It does **not** authenticate.
-- Unknown firmware leaves the profile selection empty; the user must choose a
-  profile explicitly. A matched partial/exact profile still requires the user to
-  press **Connect**.
-- The selected profile determines auth flow, request fields and extraction.
-  Adding a second manufacturer profile requires no `app.py` or `static/app.js`
-  changes.
+- The browser never sends, selects or displays a connector profile ID.
+- `/api/login-defaults` performs unauthenticated identification internally and
+  returns only gateway address, supported flag and editable credential defaults.
+- Authentication happens only after **Connect**. The backend resolves the
+  connector, retrieves its credential suggestion and invokes that connector's
+  authentication flow.
+- Unknown firmware leaves the connector unresolved, returns the simple
+  unsupported-gateway message and does not try arbitrary authentication.
+- When the unchanged FiberHome default password is submitted, the one known
+  configured fallback is tried through the same connector flow before failing.
+- The selected connector determines request fields and extraction. A second
+  manufacturer profile requires no `app.py` or `static/app.js` change.
 - Missing, unsupported, invalid and failed fields never become `0`, `false` or
   an empty string. They are explicit `Availability` states with `value: null`.
+- A failed refresh keeps the last rendered values and marks the footer as stale.
 - The connected-device count is derived only from a loaded collection.
 - The dialer action is generated only from a validated phone number and is
   triggered by an explicit tap. No call is placed automatically.
-- No secret values are stored in profiles, the source tree, logs, success
-  messages or the public API.
-- JSON cannot execute code: expressions are parsed only by the fixed path,
-  regex and transform implementations; unsupported methods fail explicitly.
+- No credential values are copied into connector profiles, logs, success
+  messages or the public dashboard payload.
+- JSON cannot execute code: expressions are parsed only by fixed path, regex and
+  transform implementations; unsupported methods fail explicitly.
 
 ## Test evidence
 
@@ -67,25 +91,25 @@ python -m unittest discover -s tests -q
 python -m tools.connector_builder validate
 ```
 
-Result: **83 tests OK**; `node --check` clean; catalog structural validity
+Result: **94 tests OK**; `node --check` clean; catalog structural validity
 **PASS**, 1 connector, 0 errors, 0 warnings.
 
-The new integration tests prove:
+The integration tests prove:
 
-1. profile load/validation and identification from a discovery observation;
-2. endpoint dependency order, auth, dynamic values, GET/POST, session state and
-   explicit logout;
-3. extraction into `UniversalModel`, serialization, collection/device count and
-   validated call action;
-4. endpoint failures and missing fields produce explicit error/unsupported
-   states with no fabricated values;
+1. profile load/validation and internal identification from a discovery observation;
+2. endpoint dependency order, auth, dynamic values, GET/POST, session state and explicit logout;
+3. extraction into `UniversalModel`, serialization, collection/device count and validated call action;
+4. endpoint failures and missing fields produce error/unsupported states with no fabricated values;
 5. one automatic reauthentication after a profile session-expiry signal;
 6. profile text cannot execute code;
-7. a second synthetic manufacturer profile is served by `/api/data` and rendered
-   by the unchanged UI;
-8. unknown firmware does not auto-select a profile or authenticate;
-9. `app.py`, the template and the script contain no legacy vendor normalization
-   or response-key fallbacks.
+7. a second synthetic manufacturer profile is served by `/api/data` and rendered by the unchanged UI;
+8. gateway/username/password defaults are returned without authentication;
+9. a client-supplied profile ID is ignored and connector selection happens in the backend;
+10. user-overridden credentials are used, and the known FiberHome fallback stays in the same connector flow;
+11. unsupported gateways do not authenticate and return only a simple message;
+12. `app.py`, the template and the script contain no legacy vendor normalization or response-key fallbacks;
+13. the restored template and stylesheet match the `3bd1d55` presentation contract;
+14. PWA icon source, PNG sizes, favicon, manifest and service-worker cache are present.
 
 ## Physical-device acceptance — NOT COMPLETE
 

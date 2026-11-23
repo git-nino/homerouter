@@ -191,35 +191,6 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0, 209, 17
 .msg.error { color: var(--danger); }
 .msg.ok { color: var(--accent); }
 .footer-note { color: #4f5b6d; font-size: 10px; text-align: center; margin: 18px 0 0; }
-.discovery-box {
-  background: #0e131c;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 18px;
-}
-.discovery-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: .1em;
-  color: var(--accent);
-  margin-bottom: 8px;
-}
-.discovery-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-  padding: 3px 0;
-}
-.discovery-row span { color: var(--muted); }
-.discovery-row strong { color: var(--text); font-family: var(--mono); font-size: 11px; text-align: right; }
-.discovery-evidence {
-  color: #6b7789;
-  font-size: 10px;
-  line-height: 1.4;
-  margin-top: 7px;
-}
 
 /* ---------- speedtest ---------- */
 .speed-panel { margin-bottom: 14px; }

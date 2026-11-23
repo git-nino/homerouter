@@ -21,7 +21,7 @@ class UiPolishTests(unittest.TestCase):
         cls.manifest = (ROOT / "static" / "manifest.webmanifest").read_text(encoding="utf-8")
         cls.worker = (ROOT / "static" / "sw.js").read_text(encoding="utf-8")
         start = cls.template.find('<div class="card panel" id="voipPanel">')
-        end = cls.template.find("<!-- 4. System Information -->")
+        end = cls.template.find("<!-- WAN + Optical -->")
         cls.voip_block = cls.template[start:end]
 
     def test_speed_button_uses_ookla_label(self):
@@ -64,17 +64,22 @@ class UiPolishTests(unittest.TestCase):
         self.assertIn(".call-fab", self.styles)
         self.assertIn("border-radius: 50%", self.styles)
 
-    def test_pwa_icons_are_generated_from_ont_source(self):
-        self.assertTrue((ROOT / "static" / "icon-ont.png").is_file())
+    def test_pwa_icons_are_generated_from_dashboard_icons_router(self):
+        source = ROOT / "static" / "dashboard-icons-router.svg"
+        attribution = (ROOT / "docs" / "ICON_ATTRIBUTION.md").read_text(encoding="utf-8")
+        self.assertTrue(source.is_file())
+        self.assertIn("<svg", source.read_text(encoding="utf-8")[:200])
+        self.assertIn("homarr-labs/dashboard-icons/blob/main/svg/router.svg", attribution)
         self.assertEqual(png_size(ROOT / "static" / "icon-192.png"), (192, 192))
         self.assertEqual(png_size(ROOT / "static" / "icon-512.png"), (512, 512))
         self.assertEqual(png_size(ROOT / "static" / "favicon.png"), (64, 64))
         self.assertIn("/static/icon-192.png", self.manifest)
         self.assertIn("/static/icon-512.png", self.manifest)
         self.assertIn("favicon.png", self.template)
+        self.assertIn("apple-touch-icon", self.template)
 
     def test_service_worker_cache_includes_favicon(self):
-        self.assertIn("gwmon-v6", self.worker)
+        self.assertIn("gwmon-v7", self.worker)
         self.assertIn("/static/favicon.png", self.worker)
 
 

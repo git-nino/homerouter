@@ -47,6 +47,10 @@ _lock = threading.Lock()
 
 
 CONFIDENCE_RANK = {"unknown": 0, "partial": 1, "exact": 2}
+UNSUPPORTED_GATEWAY_MESSAGE = (
+    "Unsupported or unidentified gateway. This device does not yet have a "
+    "compatible connector profile."
+)
 
 
 def _utc_now():
@@ -77,7 +81,38 @@ def _safe_credential_suggestion(manager, key):
     }
 
 
-def run_discovery(force=False):
+def _login_defaults(manager, discovery):
+    """Build the only login data the browser needs; no connector details."""
+
+    selected = discovery.get("selected_profile")
+    if selected:
+        profile = manager.get(selected) or {}
+        credential_key = ((profile.get("auth") or {}).get(
+            "credential_suggestion_key"
+        ))
+    else:
+        credential_key = "generic_user_supplied"
+    suggestion = manager.credential_suggestion(credential_key) or {}
+    return {
+        "gateway": discovery.get("gateway", ""),
+        "gateway_detected": bool(discovery.get("gateway_detected")),
+        "supported": bool(selected),
+        "username": str(suggestion.get("default_username") or ""),
+        "password": str(suggestion.get("default_password") or ""),
+        "message": None if selected else UNSUPPORTED_GATEWAY_MESSAGE,
+    }
+
+
+def _public_model_payload(model, speed):
+    """Serialize the universal model without exposing internal connector state."""
+
+    payload = _apply_speedtest_to_model(model, speed).to_dict()
+    payload.pop("profile_id", None)
+    payload.pop("compatibility", None)
+    return payload
+
+
+def run_discovery(force=False, host=None):
     """Detect the gateway, run unauthenticated probes, and match a profile."""
 
     with _lock:
@@ -85,10 +120,13 @@ def run_discovery(force=False):
         previous = state["discovery"]
         current = state["gateway"]
 
+    requested_host = str(host or "").strip()
+    cache_host = requested_host or current.get("gateway")
+
     if (
         not force
         and previous
-        and previous.get("gateway") == current.get("gateway")
+        and previous.get("gateway") == cache_host
         and previous.get("detected") == current.get("detected")
     ):
         return previous
@@ -96,7 +134,7 @@ def run_discovery(force=False):
     detected = detect_gateway()
     with _lock:
         state["gateway"] = detected
-    host = detected.get("gateway", "")
+    host = requested_host or str(detected.get("gateway") or "").strip()
 
     candidates = []
     profile_rows = []
@@ -155,6 +193,7 @@ def run_discovery(force=False):
     result = {
         "gateway": host,
         "detected": bool(detected.get("detected")),
+        "gateway_detected": bool(detected.get("detected")),
         "detected_device": detected_device,
         "selected_profile": selected,
         "identification_confidence": confidence,
@@ -304,6 +343,18 @@ def api_gateway():
         return jsonify(state["gateway"])
 
 
+@app.route("/api/login-defaults")
+def api_login_defaults():
+    """Return only the fields needed by the simple login form.
+
+    Identification runs internally here. It performs unauthenticated discovery
+    only and never calls the selected connector's authentication flow.
+    """
+
+    discovery = run_discovery()
+    return jsonify(_login_defaults(state["manager"], discovery))
+
+
 @app.route("/api/discovery")
 def api_discovery():
     return jsonify(run_discovery())
@@ -316,24 +367,16 @@ def api_session():
         return jsonify({
             "connected": state["connected"] and executor is not None,
             "gateway": state["gateway"].get("gateway"),
-            "profile": getattr(executor, "profile_id", None) if executor else None,
-            "physical_device_check_required": True,
         })
 
 
 @app.route("/api/connect", methods=["POST"])
 def api_connect():
     payload = request.get_json(silent=True) or {}
-    profile_id = str(payload.get("profile_id") or "").strip()
     username = str(payload.get("username") or "").strip()
     password = payload.get("password")
-    host = str(payload.get("gateway") or "").strip()
+    requested_host = str(payload.get("gateway") or "").strip()
 
-    if not profile_id:
-        return jsonify({
-            "ok": False,
-            "message": "Select a connector profile before connecting.",
-        }), 400
     if not username:
         return jsonify({"ok": False, "message": "Enter the gateway username."}), 400
     if password is None:
@@ -341,47 +384,61 @@ def api_connect():
 
     with _lock:
         manager = state["manager"]
-    profile = manager.get(profile_id)
+
+    discovery = run_discovery(force=bool(requested_host), host=requested_host or None)
+    profile_id = discovery.get("selected_profile")
+    host = discovery.get("gateway") or requested_host
+    profile = manager.get(profile_id) if profile_id else None
     if profile is None or not profile.get("enabled", True):
-        return jsonify({"ok": False, "message": "The selected profile is not available."}), 400
-
-    if not host:
-        host = run_discovery().get("gateway", "")
-
-    executor = ConnectorExecutor(
-        profile, host,
-        credentials={"username": username, "password": password},
-        manager=manager,
-    )
-    try:
-        connected = executor.connect()
-    except (AuthenticationError, ExecutorError):
         return jsonify({
             "ok": False,
-            "message": "Authentication failed for the selected profile. "
-                       "Check the credentials and connector selection.",
-            "profile_id": profile_id,
+            "message": UNSUPPORTED_GATEWAY_MESSAGE,
+        }), 400
+
+    credential_key = ((profile.get("auth") or {}).get("credential_suggestion_key"))
+    suggestion = manager.credential_suggestion(credential_key) or {}
+    default_password = str(suggestion.get("default_password") or "")
+    passwords = [str(password)]
+    if default_password and passwords[0] == default_password:
+        for candidate in suggestion.get("fallback_passwords") or []:
+            candidate = str(candidate)
+            if candidate and candidate not in passwords:
+                passwords.append(candidate)
+
+    executor = None
+    for candidate in passwords:
+        attempt = ConnectorExecutor(
+            profile, host,
+            credentials={"username": username, "password": candidate},
+            manager=manager,
+        )
+        try:
+            attempt.connect()
+        except (AuthenticationError, ExecutorError):
+            continue
+        executor = attempt
+        break
+
+    if executor is None:
+        return jsonify({
+            "ok": False,
+            "message": "Authentication failed. Check the username and password.",
         }), 401
 
     with _lock:
         state["executor"] = executor
         state["username"] = username
-        state["credentials"] = {
-            "username": username,
-            "profile_id": profile_id,
-        }
+        state["credentials"] = {"username": username, "profile_id": profile_id}
         state["connected"] = True
         state["gateway"] = {
             "gateway": host,
-            "model": (state.get("discovery") or {}).get("detected_device") or "",
+            "model": discovery.get("detected_device") or "",
             "detected": True,
         }
     return jsonify({
         "ok": True,
-        "message": f"Connected with profile {connected['display_name']}.",
+        "message": "Connected.",
         "gateway": host,
-        "profile_id": profile_id,
-        "physical_device_check_required": True,
     })
 
 
@@ -403,7 +460,7 @@ def api_data():
         return jsonify({"error": "Router session expired. Please reconnect."}), 401
     except (AuthenticationError, ExecutorError) as exc:
         return jsonify({"error": str(exc)}), 502
-    return jsonify(_apply_speedtest_to_model(model, speed).to_dict())
+    return jsonify(_public_model_payload(model, speed))
 
 
 @app.route("/api/disconnect", methods=["POST"])

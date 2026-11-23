@@ -67,46 +67,29 @@ function collectionChips(model, name) {
     '<span class="muted">none</span>';
 }
 
-/* ---------- discovery ---------- */
-async function loadDiscovery() {
+/* ---------- simple login defaults (identification is backend-only) ---------- */
+async function loadLoginDefaults() {
   try {
-    const res = await fetch('/api/discovery');
+    const res = await fetch('/api/login-defaults');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data.gateway) $('gatewayInput').value = data.gateway;
-    $('gatewayBadge').textContent = data.gateway +
-      (data.detected ? ' ✓' : ' (guess)');
+    if (data.username) $('userInput').value = data.username;
+    if (data.password) $('passInput').value = data.password;
+    $('gatewayBadge').textContent = (data.gateway || 'detecting…') +
+      (data.gateway_detected ? ' ✓' : ' (guess)');
 
-    $('detectedDevice').textContent = data.detected_device ||
-      (data.detected ? 'Gateway detected' : 'Gateway not detected');
-    $('profileMatch').textContent = data.selected_profile
-      ? `${data.selected_profile} (${data.identification_confidence})`
-      : 'Unknown firmware — choose a profile';
-    $('discoveryEvidence').textContent = data.evidence || 'No identification evidence.';
-    const hint = data.credential_suggestion || {};
-    $('credentialHint').textContent = hint.label
-      ? `${hint.label}. ${hint.provenance || ''}`
-      : 'No credential values are stored in this app.';
-
-    const select = $('profileInput');
-    const previous = select.value;
-    select.innerHTML = '<option value="">Select a profile…</option>' +
-      (data.profiles || []).map(profile =>
-        `<option value="${esc(profile.id)}">${esc(profile.display_name)} · ${esc(profile.status || 'observed')}</option>`
-      ).join('');
-    select.value = data.selected_profile || (previous &&
-      (data.profiles || []).some(p => p.id === previous) ? previous : '');
-
-    if ((data.discovery_errors || []).length) {
-      $('discoveryEvidence').textContent += ' · ' + data.discovery_errors.join(' · ');
-    }
+    const msg = $('loginMsg');
+    msg.className = 'msg' + (data.message ? ' error' : '');
+    msg.textContent = data.message || '';
   } catch (e) {
-    $('detectedDevice').textContent = 'discovery unavailable';
-    $('discoveryEvidence').textContent = e.message;
+    // Keep editable fallback values from the markup; no connector details shown.
+    $('loginMsg').className = 'msg error';
+    $('loginMsg').textContent = 'Could not check the local gateway. You can still edit the fields and connect.';
   }
 }
 
-/* ---------- connect ---------- */
+/* ---------- login ---------- */
 $('loginForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const btn = $('loginBtn');
@@ -114,7 +97,7 @@ $('loginForm').addEventListener('submit', async (event) => {
   btn.disabled = true;
   btn.textContent = 'Connecting…';
   msg.className = 'msg';
-  msg.textContent = 'Authenticating with the selected connector profile…';
+  msg.textContent = 'Detecting gateway and logging in…';
 
   try {
     const res = await fetch('/api/connect', {
@@ -122,8 +105,7 @@ $('loginForm').addEventListener('submit', async (event) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         gateway: $('gatewayInput').value.trim(),
-        profile_id: $('profileInput').value,
-        username: $('userInput').value,
+        username: $('userInput').value.trim(),
         password: $('passInput').value,
       }),
     });
@@ -157,6 +139,7 @@ function enterDashboard() {
   show('speedBtn', true);
   show('disconnectBtn', true);
   $('statusDot').className = 'dot dot-on';
+  $('statusDot').title = 'Connection status';
   show('speedPanel', true);
   refreshData();
   if (pollTimer) clearInterval(pollTimer);
@@ -173,8 +156,11 @@ async function refreshData() {
     }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     render(await res.json());
+    $('statusDot').title = 'Connection status';
   } catch (e) {
-    $('lastUpdate').textContent = 'refresh failed: ' + e.message;
+    // Keep the last valid values and say so explicitly.
+    $('lastUpdate').textContent = 'stale — refresh failed: ' + e.message;
+    $('statusDot').title = 'Stale data — last refresh failed';
   }
 }
 
@@ -420,10 +406,11 @@ function leaveDashboard(message) {
   show('speedBtn', false);
   show('disconnectBtn', false);
   $('statusDot').className = 'dot dot-off';
+  $('statusDot').title = 'Connection status';
   const msg = $('loginMsg');
   msg.className = 'msg' + (message && message !== 'Disconnected.' ? ' error' : ' ok');
   msg.textContent = message || '';
-  loadDiscovery();
+  loadLoginDefaults();
 }
 
 /* ---------- PWA (install from the browser menu) ---------- */
@@ -435,7 +422,7 @@ if ('serviceWorker' in navigator) {
 
 /* ---------- init ---------- */
 async function init() {
-  await loadDiscovery();
+  await loadLoginDefaults();
   try {
     const res = await fetch('/api/session');
     const session = await res.json();

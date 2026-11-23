@@ -83,14 +83,35 @@ html, body {
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .55; cursor: wait; }
 .btn-speed {
-  color: #0b0f16;
-  background: linear-gradient(135deg, var(--accent-2), #ff8f4d);
+  color: #04141f;
+  background: linear-gradient(135deg, #59c8f5, #20d27d);
   border-color: transparent;
   font-size: 12px;
   padding: 7px 11px;
 }
-.btn-speed:hover { color: #000; filter: brightness(1.1); }
+.btn-speed:hover { color: #04141f; filter: brightness(1.08); }
 .btn-ghost { padding: 7px 10px; font-size: 13px; }
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.icon-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-btn:hover { color: #fff; border-color: var(--accent); }
 .btn-primary {
   background: var(--accent);
   color: #06231e;
@@ -198,19 +219,33 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0, 209, 17
 .speed-server { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }
 
 /* ---------- voip / telephony ---------- */
-.voip-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
-.voip-number { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.voip-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.voip-identity { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .voip-phone { font-family: var(--mono); font-size: 22px; font-weight: 700; word-break: break-all; }
-.voip-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; justify-content: center; }
-.btn-call {
+.call-fab {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
   color: #06231e;
   background: var(--accent);
-  border-color: transparent;
-  font-size: 14px;
-  padding: 10px 16px;
+  box-shadow: 0 4px 14px rgba(0, 209, 178, .28);
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease;
 }
-.btn-call:hover { background: #00e6c4; color: #06231e; }
-.btn-call:disabled { opacity: .5; cursor: not-allowed; }
+.call-fab svg { width: 24px; height: 24px; fill: currentColor; }
+.call-fab:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 209, 178, .38);
+  background: #00e6c4;
+}
+.call-fab:active:not(:disabled) { transform: scale(.94); }
+.call-fab:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; }
 
 /* ---------- stat cards ---------- */
 .stat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
@@ -266,7 +301,6 @@ table { border-collapse: collapse; width: 100%; }
   .field-row { grid-template-columns: 1fr 1fr; }
   .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .speed-result { grid-template-columns: repeat(4, 1fr); }
-  .voip-grid { grid-template-columns: 1fr auto; align-items: center; }
 }
 @media (min-width: 1000px) {
   main { padding: 18px; }

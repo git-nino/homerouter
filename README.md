@@ -33,8 +33,9 @@ First run creates `~/.venvs/gwmon` and installs `flask`, `requests`,
    next, followed by WAN/Optical, System/LAN/WiFi and Connected Devices. The
    Call button appears only when a validated phone number is available and
    opens your phone's dialer; the app never places the call itself.
-5. Tap **⚡ Speedtest** at the top to run a download / upload / latency test
-   (uses `speedtest-cli`; the test runs in the background and takes ~30–60 s).
+5. Tap **Speedtest by Ookla** at the top to run a download / upload / latency
+   test (uses `speedtest-cli`; the test runs in the background and takes
+   ~30–60 s).
 6. **Disconnect** clears the local session and also sends `do_logout` to the
    router, so a subsequent direct login attempt sees a fresh session instead of
    "already connected".
@@ -104,5 +105,5 @@ python3 -m unittest discover -s tests -v
 - `run.sh` — simple desktop launcher
 - `install.sh` — universal Termux/Ubuntu installer + service setup (works via `curl | bash`)
 - `.gitignore` — keeps caches, venvs and logs out of git
-- `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png` — PWA assets
+- `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png`, `static/favicon.png` — PWA assets derived from `icon-ont.png`
 - `docs/AUDIT_PHASE1.md` — Phase 1 architecture audit and phased migration plan

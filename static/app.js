@@ -146,29 +146,22 @@ function renderVoip(d) {
     : (voip.registration_state || voip.registrationState || null);
 
   let dialUri = null;
-  let reason = action ? action.reason : null;
   if (action) {
     if (action.enabled && action.dial_uri) dialUri = action.dial_uri;
   } else if (availability === 'available' || availability === 'stale') {
     dialUri = dialUriFrom(phone);
-    if (!dialUri) reason = 'Phone number failed validation.';
-  } else {
-    reason = 'No validated phone number is available for this profile.';
   }
 
   const stateText = registration || String(availability).replace(/_/g, ' ');
   $('voipState').textContent = stateText;
   $('voipState').className = 'pill' + (dialUri ? '' : ' warn');
   setText('voipPhone', phone);
-  setText('voipRegistration', registration ? 'Registration: ' + registration : 'State: ' + stateText);
 
   const btn = $('voipCallBtn');
   btn.dataset.dialUri = dialUri || '';
   btn.hidden = !dialUri;
   btn.disabled = !dialUri;
-  $('voipNote').textContent = dialUri
-    ? 'Opens your phone dialer with the number prefilled. No call is placed automatically.'
-    : (reason || 'Call is unavailable.');
+  btn.title = dialUri ? 'Open phone dialer · not ONT SIP' : 'No validated phone number';
 }
 
 function render(d) {

@@ -1,0 +1,145 @@
+{
+  "id": "har.ont-abc123def456",
+  "display_name": "HAR-derived ONT profile (Synthetic Model X1)",
+  "status": "draft",
+  "enabled": false,
+  "evidence": {
+    "source": "Sanitized HAR analysis of traffic to <selected-host> (source file: har-abc123def4.har); selected host only, verified=false.",
+    "verified": false,
+    "notes": [
+      "Generated from HAR request/response structure, never from raw copied content.",
+      "Credentials, cookies, tokens, nonces, phone numbers, public IPs, serials, MACs and personal hostnames are redacted."
+    ]
+  },
+  "identification": {
+    "confidence": "partial",
+    "rules": [
+      {
+        "id": "id-device_model-get-root-abc123",
+        "phase": "pre_auth",
+        "source": "get-root",
+        "field": "ModelName",
+        "operator": "equals",
+        "value": "Synthetic Model X1",
+        "confidence": "partial",
+        "evidence": "Non-sensitive value observed in the selected-host HAR response; verify on the device."
+      }
+    ]
+  },
+  "auth": {
+    "flows": [
+      {
+        "id": "observed-auth-flow",
+        "type": "token",
+        "order": 1,
+        "success": { "field": "login_result" },
+        "endpoints": { "login": "post-login" }
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "id": "get-root",
+      "method": "GET",
+      "path": "/",
+      "format": "json",
+      "timeout_seconds": 6,
+      "scheme": "http",
+      "auth": false,
+      "description": "Observed in HAR and sanitized; verify path, parameters and auth before enabling."
+    },
+    {
+      "id": "post-login",
+      "method": "POST",
+      "path": "/login",
+      "format": "json",
+      "timeout_seconds": 6,
+      "scheme": "http",
+      "auth": false,
+      "body": {
+        "ajaxmethod": "do_login",
+        "password": { "source": "user_input", "field": "password" }
+      },
+      "body_format": "form",
+      "description": "Observed in HAR and sanitized; verify path, parameters and auth before enabling."
+    }
+  ],
+  "extraction": [
+    {
+      "id": "extract-device_model-get-root-abc12",
+      "metric": "device.model",
+      "endpoint": "get-root",
+      "method": "json_path",
+      "expression": "$.ModelName",
+      "transforms": ["strip"],
+      "value_type": "string",
+      "availability_on_missing": "unavailable"
+    }
+  ],
+  "validation": [
+    { "metric": "device.model", "rule": "non_empty", "on_failure": "unavailable" }
+  ],
+  "dependencies": {},
+  "capabilities": ["device_identity"],
+  "limitations": [
+    "Draft was generated from a browser HAR only; no live probes, scans, or credential guesses were performed.",
+    "The connector is disabled and must not be enabled until manual review is complete."
+  ],
+  "generated_by": "Capture-ONT.ps1 v1.0.0 (Windows native, offline HAR analysis)",
+  "source_har": "har-abc123def4.har",
+  "requires_manual_auth_handler": false,
+  "auth_observations": {
+    "classification": "token",
+    "proposed_handler": "token",
+    "sequence": ["POST /login (authentication)"],
+    "dynamic_values": ["token"],
+    "notes": [
+      "Authentication was classified from observed requests only; no credentials or secret values were retained.",
+      "No encryption algorithm or executable auth handler was inferred."
+    ],
+    "evidence": "Observed across 2 selected request(s) to the selected host."
+  },
+  "identification_candidates": [
+    {
+      "metric": "device.model",
+      "endpoint": "get-root",
+      "field": "ModelName",
+      "path": "$.ModelName",
+      "value": "Synthetic Model X1",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Non-sensitive identifier observed; not unique to firmware without further evidence."
+    }
+  ],
+  "extraction_candidates": [
+    {
+      "metric": "device.model",
+      "endpoint": "get-root",
+      "field": "ModelName",
+      "path": "$.ModelName",
+      "method": "json_path",
+      "expression": "$.ModelName",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Field name and nesting matched a known metric name; meaning must be confirmed on the device."
+    }
+  ],
+  "metric_mapping_candidates": [
+    {
+      "metric": "device.model",
+      "endpoint": "get-root",
+      "field": "ModelName",
+      "path": "$.ModelName",
+      "method": "json_path",
+      "expression": "$.ModelName",
+      "confidence": "partial",
+      "manual_review": true,
+      "evidence": "Field name and nesting matched a known metric name; meaning must be confirmed on the device."
+    }
+  ],
+  "manual_review": [
+    "Confirm the selected host really is the ONT/router UI; the default gateway was only a hint.",
+    "Verify every endpoint path, HTTP method, query parameter, body field and scheme before enabling.",
+    "Confirm the authentication flow and select or implement a compatible handler if required."
+  ]
+}

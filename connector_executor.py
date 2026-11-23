@@ -18,7 +18,7 @@ import requests
 from requests.auth import AuthBase
 
 from auth_handlers import AuthenticationError, auth_handler
-from connector_manager import ConnectorManager
+from connector_manager import BODY_FORMATS, SCHEMES, ConnectorManager
 from models.enums import Availability, CompatibilityState, Domain
 from models.phone import normalize_phone_number
 from models.universal import METRICS, ConnectedDevice, UniversalModel
@@ -182,9 +182,17 @@ class ConnectorExecutor:
         self.connector = connector
         self.profile_id = str(connector.get("id", ""))
         self.display_name = str(connector.get("display_name", self.profile_id))
-        self.gateway = str(gateway).strip().rstrip("/")
+        gateway_text = str(gateway).strip().rstrip("/")
+        for prefix in ("http://", "https://"):
+            if gateway_text.lower().startswith(prefix):
+                gateway_text = gateway_text[len(prefix):]
+                break
+        self.gateway = gateway_text.split("/", 1)[0]
         if not self.gateway:
             raise ExecutorError("A gateway address is required.")
+        self.scheme = str(connector.get("scheme", "http")).lower()
+        if self.scheme not in SCHEMES:
+            raise ExecutorError(f"unsupported connector scheme {self.scheme!r}")
         self.credentials = dict(credentials or {})
         self.username = str(self.credentials.get("username", ""))
         self.password = self.credentials.get("password", "")
@@ -387,16 +395,26 @@ class ConnectorExecutor:
         body = self._resolve_map(endpoint.get("body"), endpoint_id)
         headers = self._resolve_map(endpoint.get("headers"), endpoint_id)
         timeout = float(endpoint.get("timeout_seconds", 6))
-        url = f"http://{self.gateway}{endpoint['path']}"
+        scheme = str(endpoint.get("scheme", self.scheme)).lower()
+        if scheme not in SCHEMES:
+            raise EndpointError(f"unsupported endpoint scheme {scheme!r}")
+        body_format = str(endpoint.get("body_format", "form")).lower()
+        if body_format not in BODY_FORMATS:
+            raise EndpointError(f"unsupported body format {body_format!r}")
+        url = f"{scheme}://{self.gateway}{endpoint['path']}"
         request_kwargs: Dict[str, Any] = {
             "params": query or None,
             "headers": headers or None,
             "timeout": timeout,
+            "verify": True,
         }
         if endpoint.get("auth") is False:
             request_kwargs["auth"] = _NoAuth()
         if str(endpoint.get("method", "GET")).upper() == "POST":
-            request_kwargs["data"] = body or None
+            if body_format == "json":
+                request_kwargs["json"] = body or None
+            else:
+                request_kwargs["data"] = body or None
 
         try:
             response = self.http.request(

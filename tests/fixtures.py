@@ -47,6 +47,7 @@ class RecordingSession:
     def request(self, method, url, **kwargs):
         params = dict(kwargs.get("params") or {})
         data = dict(kwargs.get("data") or {})
+        json_body = kwargs.get("json")
         name = str(
             params.get("ajaxmethod")
             or data.get("ajaxmethod")
@@ -60,7 +61,9 @@ class RecordingSession:
             "name": name,
             "params": params,
             "data": data,
+            "json": dict(json_body) if isinstance(json_body, dict) else json_body,
             "headers": dict(kwargs.get("headers") or {}),
+            "verify": kwargs.get("verify"),
         })
         if name in self.failed_endpoints:
             return FakeResponse({}, status_code=500)

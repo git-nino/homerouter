@@ -13,6 +13,7 @@ can describe evidence; only a physical ONT comparison can prove compatibility.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
@@ -29,8 +30,14 @@ DEFAULT_CREDENTIALS = ROOT / "config" / "default_credentials.json"
 DEFAULT_SCHEMA = ROOT / "config" / "connector.schema.json"
 
 EXTRACTION_METHODS = {
-    "json_path", "json_path_multi", "xpath", "css", "regex", "header",
+    "json_path", "json_path_multi", "regex", "header",
     "literal", "list_length", "list_objects", "keyed_objects",
+}
+SCHEMES = {"http", "https"}
+BODY_FORMATS = {"form", "json"}
+CREDENTIAL_FIELDS = {
+    "key", "default_username", "default_password",
+    "requires_user_confirmation", "provenance",
 }
 SUPPORTED_TRANSFORMS = {
     "strip",
@@ -48,7 +55,23 @@ AVAILABILITY_VALUES = {item.value for item in Availability}
 DOMAIN_VALUES = {item.value for item in Domain}
 VALUE_TYPE_VALUES = {item.value for item in ValueType}
 CONFIDENCE_RANK = {"unknown": 0, "partial": 1, "exact": 2}
-SECRET_KEYS = {"password", "loginpd", "secret", "token", "api_key", "credential"}
+SECRET_KEYS = {
+    "password", "loginpd", "secret", "token", "api_key", "apikey", "credential",
+    "authorization", "proxy-authorization", "cookie", "set-cookie",
+    "session", "sessionid", "csrf", "csrf_token", "xsrf", "nonce",
+    "phonenumber", "phone", "mobile", "msisdn", "telephone", "sipuser",
+    "serial", "serialnumber", "sn", "gponsn",
+}
+_AUTH_VALUE_RE = re.compile(r"\b(?:Basic|Bearer|Digest|Token)\s+[A-Za-z0-9._~+/=-]{6,}", re.I)
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b")
+_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+                  "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24",
+                  "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4",
+                  "240.0.0.0/4", "255.255.255.255/32", "::1/128")
+)
 
 
 class ConnectorError(Exception):
@@ -137,6 +160,14 @@ def _as_list(value: Any) -> List[Any]:
 
 def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _is_public_ip(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return not any(address in network for network in _PRIVATE_NETWORKS)
 
 
 def _hashable(value: Any) -> Any:
@@ -441,9 +472,11 @@ class ConnectorManager:
                 index,
             ))
             issues.extend(self._validate_auth(connector, base, credential_keys))
+            issues.extend(self._validate_endpoint_runtime(connector, base))
             issues.extend(self._validate_extraction(connector, base))
             issues.extend(self._validate_validation_rules(connector, base))
             issues.extend(self._validate_dependencies(connector, base))
+            issues.extend(self._validate_draft_metadata(connector, base))
 
             if connector.get("enabled", True) is False:
                 issues.append(ValidationIssue(
@@ -470,6 +503,22 @@ class ConnectorManager:
                         "error", "secret_value_in_catalog", child,
                         "connector files may reference secrets but must never contain them",
                     ))
+                if isinstance(value, str) and not value.startswith("<redacted-"):
+                    if _AUTH_VALUE_RE.search(value):
+                        issues.append(ValidationIssue(
+                            "error", "authorization_value_in_catalog", child,
+                            "Authorization header values must be redacted placeholders",
+                        ))
+                    if any(_is_public_ip(match.group(0)) for match in _IPV4_RE.finditer(value)):
+                        issues.append(ValidationIssue(
+                            "error", "public_ip_in_catalog", child,
+                            "public IP addresses must be redacted in connector catalogs",
+                        ))
+                    if _MAC_RE.search(value):
+                        issues.append(ValidationIssue(
+                            "error", "mac_address_in_catalog", child,
+                            "MAC addresses must be redacted in connector catalogs",
+                        ))
                 issues.extend(self._scan_secrets(value, child))
         elif isinstance(node, list):
             for index, value in enumerate(node):
@@ -634,6 +683,59 @@ class ConnectorManager:
                         "error", "unknown_auth_endpoint", f"{flow_path}.endpoints.{name}",
                         f"references unknown endpoint '{endpoint_id}'",
                     ))
+        return issues
+
+    def _validate_endpoint_runtime(
+        self, connector: Dict[str, Any], base: str
+    ) -> List[ValidationIssue]:
+        """Reject profile options the live executor cannot honour."""
+
+        issues: List[ValidationIssue] = []
+        default_scheme = connector.get("scheme", "http")
+        if default_scheme not in SCHEMES:
+            issues.append(ValidationIssue(
+                "error", "unsupported_scheme", f"{base}.scheme",
+                f"unsupported scheme {default_scheme!r}; use http or https",
+            ))
+
+        for index, endpoint in enumerate(_as_list(connector.get("endpoints"))):
+            if not isinstance(endpoint, dict):
+                continue
+            path = f"{base}.endpoints[{index}]"
+            scheme = endpoint.get("scheme", default_scheme)
+            if scheme not in SCHEMES:
+                issues.append(ValidationIssue(
+                    "error", "unsupported_scheme", f"{path}.scheme",
+                    f"unsupported scheme {scheme!r}; use http or https",
+                ))
+            body_format = endpoint.get("body_format", "form")
+            if body_format not in BODY_FORMATS:
+                issues.append(ValidationIssue(
+                    "error", "unsupported_body_format", f"{path}.body_format",
+                    f"unsupported body format {body_format!r}; use form or json",
+                ))
+            if endpoint.get("method") == "POST" and body_format == "json" and not isinstance(endpoint.get("body"), dict):
+                issues.append(ValidationIssue(
+                    "error", "missing_json_body", f"{path}.body",
+                    "a JSON POST endpoint must declare an object body",
+                ))
+        return issues
+
+    def _validate_draft_metadata(
+        self, connector: Dict[str, Any], base: str
+    ) -> List[ValidationIssue]:
+        issues: List[ValidationIssue] = []
+        if connector.get("status") == "draft":
+            if connector.get("enabled") is True:
+                issues.append(ValidationIssue(
+                    "error", "draft_must_be_disabled", f"{base}.enabled",
+                    "draft profiles must be disabled until manually approved",
+                ))
+            if not _as_list(connector.get("manual_review")):
+                issues.append(ValidationIssue(
+                    "warning", "draft_needs_manual_review", f"{base}.manual_review",
+                    "draft profiles should list the observations a developer must verify",
+                ))
         return issues
 
     def _validate_extraction(self, connector: Dict[str, Any], base: str) -> List[ValidationIssue]:
@@ -843,6 +945,23 @@ class ConnectorManager:
                 issues.append(ValidationIssue("error", "type", path, "expected object"))
                 continue
             key = item.get("key")
+            for field in sorted(CREDENTIAL_FIELDS):
+                if field not in item:
+                    issues.append(ValidationIssue(
+                        "error", "missing_credential_field", f"{path}.{field}",
+                        f"app.py expects the '{field}' credential field",
+                    ))
+            for field in ("key", "default_username", "default_password", "provenance"):
+                if field in item and not str(item.get(field) or "").strip():
+                    issues.append(ValidationIssue(
+                        "error", "empty_credential_field", f"{path}.{field}",
+                        f"credential field '{field}' must not be empty",
+                    ))
+            if item.get("fallback_passwords") is not None and not isinstance(item.get("fallback_passwords"), list):
+                issues.append(ValidationIssue(
+                    "error", "invalid_fallback_passwords", f"{path}.fallback_passwords",
+                    "fallback_passwords must be an array when present",
+                ))
             if key in seen:
                 issues.append(ValidationIssue(
                     "error", "duplicate_credential_key", f"{path}.key",

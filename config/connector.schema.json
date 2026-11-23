@@ -4,31 +4,65 @@
   "title": "Homerouter connector catalog",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "connectors"],
+  "required": [
+    "schema_version",
+    "connectors"
+  ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": {
+      "const": 1
+    },
     "connectors": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/connector" }
+      "items": {
+        "$ref": "#/$defs/connector"
+      }
     }
   },
   "$defs": {
-    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
     "stringList": {
       "type": "array",
-      "items": { "$ref": "#/$defs/nonEmptyString" }
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
     },
-    "confidence": { "enum": ["exact", "partial", "unknown"] },
+    "confidence": {
+      "enum": [
+        "exact",
+        "partial",
+        "unknown"
+      ]
+    },
     "availability": {
-      "enum": ["available", "stale", "unavailable", "unsupported", "invalid", "not_loaded", "error"]
+      "enum": [
+        "available",
+        "stale",
+        "unavailable",
+        "unsupported",
+        "invalid",
+        "not_loaded",
+        "error"
+      ]
     },
     "connector": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "id", "display_name", "status", "evidence", "identification",
-        "auth", "endpoints", "extraction", "validation", "dependencies",
+        "id",
+        "display_name",
+        "status",
+        "evidence",
+        "identification",
+        "auth",
+        "endpoints",
+        "extraction",
+        "validation",
+        "dependencies",
         "capabilities"
       ],
       "properties": {
@@ -36,64 +70,111 @@
           "type": "string",
           "pattern": "^[a-z0-9]+(?:\\.[a-z0-9_-]+)+$"
         },
-        "display_name": { "$ref": "#/$defs/nonEmptyString" },
-        "status": { "enum": ["draft", "observed", "verified", "deprecated"] },
-        "enabled": { "type": "boolean" },
+        "display_name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "observed",
+            "verified",
+            "deprecated"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
         "evidence": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["source", "verified"],
+          "required": [
+            "source",
+            "verified"
+          ],
           "properties": {
-            "source": { "$ref": "#/$defs/nonEmptyString" },
-            "verified": { "type": "boolean" },
-            "verified_on": { "type": "string" },
-            "notes": { "$ref": "#/$defs/stringList" }
+            "source": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "verified": {
+              "type": "boolean"
+            },
+            "verified_on": {
+              "type": "string"
+            },
+            "notes": {
+              "$ref": "#/$defs/stringList"
+            }
           }
         },
         "identification": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["confidence", "rules"],
+          "required": [
+            "confidence",
+            "rules"
+          ],
           "properties": {
-            "confidence": { "$ref": "#/$defs/confidence" },
+            "confidence": {
+              "$ref": "#/$defs/confidence"
+            },
             "rules": {
               "type": "array",
               "minItems": 1,
-              "items": { "$ref": "#/$defs/identificationRule" }
+              "items": {
+                "$ref": "#/$defs/identificationRule"
+              }
             },
-            "conflicts_with": { "$ref": "#/$defs/stringList" }
+            "conflicts_with": {
+              "$ref": "#/$defs/stringList"
+            }
           }
         },
         "auth": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["flows"],
+          "required": [
+            "flows"
+          ],
           "properties": {
             "flows": {
               "type": "array",
               "minItems": 1,
-              "items": { "$ref": "#/$defs/authFlow" }
+              "items": {
+                "$ref": "#/$defs/authFlow"
+              }
             },
-            "credential_suggestion_key": { "$ref": "#/$defs/nonEmptyString" },
-            "logout_endpoint": { "$ref": "#/$defs/nonEmptyString" }
+            "credential_suggestion_key": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "logout_endpoint": {
+              "$ref": "#/$defs/nonEmptyString"
+            }
           }
         },
         "endpoints": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/endpoint" }
+          "items": {
+            "$ref": "#/$defs/endpoint"
+          }
         },
         "extraction": {
           "type": "array",
-          "items": { "$ref": "#/$defs/extractionRule" }
+          "items": {
+            "$ref": "#/$defs/extractionRule"
+          }
         },
         "validation": {
           "type": "array",
-          "items": { "$ref": "#/$defs/validationRule" }
+          "items": {
+            "$ref": "#/$defs/validationRule"
+          }
         },
         "dependencies": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/stringList" }
+          "additionalProperties": {
+            "$ref": "#/$defs/stringList"
+          }
         },
         "capabilities": {
           "type": "array",
@@ -101,58 +182,172 @@
           "uniqueItems": true,
           "items": {
             "enum": [
-              "device_identity", "wan", "optical", "voip", "system",
-              "connected_devices", "speed_test"
+              "device_identity",
+              "wan",
+              "optical",
+              "voip",
+              "system",
+              "connected_devices",
+              "speed_test",
+              "unclassified"
             ]
           }
         },
-        "limitations": { "$ref": "#/$defs/stringList" }
+        "limitations": {
+          "$ref": "#/$defs/stringList"
+        },
+        "scheme": {
+          "enum": [
+            "http",
+            "https"
+          ]
+        },
+        "generated_by": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "source_har": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "requires_manual_auth_handler": {
+          "type": "boolean"
+        },
+        "auth_observations": {
+          "$ref": "#/$defs/authObservations"
+        },
+        "identification_candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "extraction_candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "metric_mapping_candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "manual_review": {
+          "$ref": "#/$defs/stringList"
+        }
       }
     },
     "identificationRule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "phase", "source", "field", "operator", "value", "confidence"],
+      "required": [
+        "id",
+        "phase",
+        "source",
+        "field",
+        "operator",
+        "value",
+        "confidence"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/nonEmptyString" },
-        "phase": { "enum": ["pre_auth", "post_auth"] },
-        "source": { "$ref": "#/$defs/nonEmptyString" },
-        "field": { "$ref": "#/$defs/nonEmptyString" },
-        "operator": { "enum": ["equals", "not_equals", "contains", "prefix", "regex"] },
-        "value": { "type": ["string", "number", "boolean"] },
-        "confidence": { "$ref": "#/$defs/confidence" },
-        "weight": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "evidence": { "$ref": "#/$defs/nonEmptyString" }
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "phase": {
+          "enum": [
+            "pre_auth",
+            "post_auth"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "operator": {
+          "enum": [
+            "equals",
+            "not_equals",
+            "contains",
+            "prefix",
+            "regex"
+          ]
+        },
+        "value": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "weight": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
       }
     },
     "authFlow": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "type", "order", "success"],
+      "required": [
+        "id",
+        "type",
+        "order",
+        "success"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "type": {
           "enum": [
-            "none", "http_basic", "http_digest", "form", "session",
-            "token", "fiberhome_aes"
+            "none",
+            "http_basic",
+            "http_digest",
+            "form",
+            "session",
+            "token",
+            "fiberhome_aes"
           ]
         },
-        "order": { "type": "integer", "minimum": 1 },
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
         "endpoints": {
           "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/nonEmptyString" }
+          "additionalProperties": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
         },
         "fields": {
           "type": "object",
-          "additionalProperties": { "type": "object" }
+          "additionalProperties": {
+            "type": "object"
+          }
         },
         "success": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["field"],
+          "required": [
+            "field"
+          ],
           "properties": {
-            "field": { "$ref": "#/$defs/nonEmptyString" },
-            "allowed": { "type": "array", "minItems": 1 },
+            "field": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "allowed": {
+              "type": "array",
+              "minItems": 1
+            },
             "not_equal": {}
           }
         },
@@ -160,14 +355,28 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "id_field": { "$ref": "#/$defs/nonEmptyString" },
-            "store": { "type": "boolean" },
-            "cookie": { "type": "boolean" },
-            "validity_field": { "$ref": "#/$defs/nonEmptyString" },
+            "id_field": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
+            "store": {
+              "type": "boolean"
+            },
+            "cookie": {
+              "type": "boolean"
+            },
+            "validity_field": {
+              "$ref": "#/$defs/nonEmptyString"
+            },
             "invalid_values": {
               "type": "array",
               "minItems": 1,
-              "items": { "type": ["string", "number", "boolean"] }
+              "items": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ]
+              }
             }
           }
         }
@@ -176,111 +385,365 @@
     "endpoint": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "method", "path", "format", "timeout_seconds"],
+      "required": [
+        "id",
+        "method",
+        "path",
+        "format",
+        "timeout_seconds"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/nonEmptyString" },
-        "method": { "enum": ["GET", "POST"] },
-        "path": { "type": "string", "pattern": "^/" },
-        "query": { "type": "object" },
-        "body": { "type": "object" },
-        "headers": { "type": "object" },
-        "format": { "enum": ["json", "html", "xml", "text"] },
-        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 30 },
-        "auth": { "type": "boolean" },
-        "description": { "$ref": "#/$defs/nonEmptyString" }
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "query": {
+          "type": "object"
+        },
+        "body": {
+          "type": "object"
+        },
+        "headers": {
+          "type": "object"
+        },
+        "format": {
+          "enum": [
+            "json",
+            "html",
+            "xml",
+            "text"
+          ]
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 30
+        },
+        "auth": {
+          "type": "boolean"
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "scheme": {
+          "enum": [
+            "http",
+            "https"
+          ]
+        },
+        "body_format": {
+          "enum": [
+            "form",
+            "json"
+          ]
+        }
       }
     },
     "condition": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["field", "operator", "value"],
+      "required": [
+        "field",
+        "operator",
+        "value"
+      ],
       "properties": {
-        "field": { "$ref": "#/$defs/nonEmptyString" },
-        "operator": { "enum": ["equals", "not_equals", "contains", "prefix", "regex"] },
-        "value": { "type": ["string", "number", "boolean"] }
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "operator": {
+          "enum": [
+            "equals",
+            "not_equals",
+            "contains",
+            "prefix",
+            "regex"
+          ]
+        },
+        "value": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
       }
     },
     "itemField": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["target"],
+      "required": [
+        "target"
+      ],
       "properties": {
-        "field": { "$ref": "#/$defs/nonEmptyString" },
-        "fallback_field": { "$ref": "#/$defs/nonEmptyString" },
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "fallback_field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "literal": {},
         "default": {},
-        "target": { "$ref": "#/$defs/nonEmptyString" },
-        "transforms": { "$ref": "#/$defs/stringList" }
+        "target": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "transforms": {
+          "$ref": "#/$defs/stringList"
+        }
       }
     },
     "keyRange": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["start"],
+      "required": [
+        "start"
+      ],
       "properties": {
-        "start": { "type": "integer", "minimum": 0 },
-        "end": { "type": "integer", "minimum": 0 },
-        "count_field": { "$ref": "#/$defs/nonEmptyString" },
-        "max": { "type": "integer", "minimum": 1 }
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "count_field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "extractionRule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "endpoint", "method", "expression"],
+      "required": [
+        "id",
+        "endpoint",
+        "method",
+        "expression"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/nonEmptyString" },
-        "metric": { "$ref": "#/$defs/nonEmptyString" },
-        "endpoint": { "$ref": "#/$defs/nonEmptyString" },
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "metric": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "method": {
           "enum": [
-            "json_path", "json_path_multi", "xpath", "css", "regex", "header",
-            "literal", "list_length", "list_objects", "keyed_objects"
+            "json_path",
+            "json_path_multi",
+            "list_length",
+            "list_objects",
+            "keyed_objects",
+            "regex",
+            "header",
+            "literal"
           ]
         },
-        "expression": { "$ref": "#/$defs/nonEmptyString" },
-        "collection": { "$ref": "#/$defs/nonEmptyString" },
+        "expression": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "collection": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "item_fields": {
           "type": "object",
           "minProperties": 1,
-          "additionalProperties": { "$ref": "#/$defs/itemField" }
+          "additionalProperties": {
+            "$ref": "#/$defs/itemField"
+          }
         },
-        "filter": { "$ref": "#/$defs/condition" },
-        "range": { "$ref": "#/$defs/keyRange" },
-        "transform_options": { "type": "object" },
-        "when": { "$ref": "#/$defs/condition" },
+        "filter": {
+          "$ref": "#/$defs/condition"
+        },
+        "range": {
+          "$ref": "#/$defs/keyRange"
+        },
+        "transform_options": {
+          "type": "object"
+        },
+        "when": {
+          "$ref": "#/$defs/condition"
+        },
         "when_all": {
           "type": "array",
           "minItems": 1,
-          "items": { "$ref": "#/$defs/condition" }
+          "items": {
+            "$ref": "#/$defs/condition"
+          }
         },
-        "priority": { "type": "integer", "minimum": 0, "maximum": 100 },
-        "transforms": { "$ref": "#/$defs/stringList" },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "transforms": {
+          "$ref": "#/$defs/stringList"
+        },
         "value_type": {
           "enum": [
-            "string", "integer", "number", "boolean", "duration_seconds",
-            "ip_address", "mac_address", "percent", "dbm", "celsius",
-            "milliamp", "volt", "megabits_per_second", "milliseconds", "timestamp"
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "duration_seconds",
+            "ip_address",
+            "mac_address",
+            "percent",
+            "dbm",
+            "celsius",
+            "milliamp",
+            "volt",
+            "megabits_per_second",
+            "milliseconds",
+            "timestamp"
           ]
         },
-        "source_value": { "type": "boolean" },
-        "availability_on_missing": { "$ref": "#/$defs/availability" }
+        "source_value": {
+          "type": "boolean"
+        },
+        "availability_on_missing": {
+          "$ref": "#/$defs/availability"
+        }
       }
     },
     "validationRule": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["metric", "rule", "on_failure"],
+      "required": [
+        "metric",
+        "rule",
+        "on_failure"
+      ],
       "properties": {
-        "metric": { "$ref": "#/$defs/nonEmptyString" },
+        "metric": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "rule": {
           "enum": [
-            "ipv4", "ipv6", "number", "non_empty", "one_of", "phone_e164",
-            "dbm_range", "mac", "duration_seconds"
+            "ipv4",
+            "ipv6",
+            "number",
+            "non_empty",
+            "one_of",
+            "phone_e164",
+            "dbm_range",
+            "mac",
+            "duration_seconds"
           ]
         },
-        "options": { "type": "object" },
-        "on_failure": { "$ref": "#/$defs/availability" }
+        "options": {
+          "type": "object"
+        },
+        "on_failure": {
+          "$ref": "#/$defs/availability"
+        }
+      }
+    },
+    "observationText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "path",
+        "evidence"
+      ],
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence"
+      ],
+      "properties": {
+        "endpoint": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "value": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "metric": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "method": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "expression": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "manual_review": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "authObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification"
+      ],
+      "properties": {
+        "classification": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "proposed_handler": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "sequence": {
+          "$ref": "#/$defs/stringList"
+        },
+        "dynamic_values": {
+          "$ref": "#/$defs/stringList"
+        },
+        "notes": {
+          "$ref": "#/$defs/stringList"
+        },
+        "evidence": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
       }
     }
   }

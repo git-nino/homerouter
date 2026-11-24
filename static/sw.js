@@ -1,14 +1,17 @@
 /* Service worker for offline app shell. localhost is a secure context,
    so this installs without HTTPS when the app runs on the phone itself. */
-const CACHE = 'gwmon-v7';
+const CACHE = 'gwmon-v9';
 const SHELL = [
   '/',
   '/static/style.css',
   '/static/app.js',
   '/static/manifest.webmanifest',
   '/static/favicon.png',
+  '/static/apple-touch-icon.png',
   '/static/icon-192.png',
-  '/static/icon-512.png'
+  '/static/icon-512.png',
+  '/static/icon-maskable-192.png',
+  '/static/icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (event) => {

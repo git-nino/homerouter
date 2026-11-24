@@ -3,19 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0f16">
-  <title>Gateway Monitor</title>
+  <meta name="theme-color" content="#052b21">
+  <title>FTTH viewer</title>
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon.png') }}">
-  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FTTH viewer">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
 <header class="topbar">
-  <div class="brand"><span class="logo">◈</span> GATEWAY<span class="brand-accent">MONITOR</span></div>
+  <div class="brand"><span class="logo">◈</span> FTTH<span class="brand-accent"> viewer</span></div>
   <div class="top-actions">
     <span id="gatewayBadge" class="badge">detecting…</span>
     <span id="statusDot" class="dot dot-off" title="Connection status"></span>

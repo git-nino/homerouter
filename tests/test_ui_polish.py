@@ -79,8 +79,11 @@ class UiPolishTests(unittest.TestCase):
         self.assertIn("apple-touch-icon", self.template)
 
     def test_service_worker_cache_includes_favicon(self):
-        self.assertIn("gwmon-v7", self.worker)
+        # PWA branding update bumps the app-shell cache and icon set.
+        self.assertIn("gwmon-v9", self.worker)
+        self.assertNotIn("gwmon-v8'", self.worker)
         self.assertIn("/static/favicon.png", self.worker)
+        self.assertIn("/static/icon-maskable-512.png", self.worker)
 
 
 if __name__ == "__main__":

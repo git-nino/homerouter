@@ -52,7 +52,7 @@ class DashboardOrderTests(unittest.TestCase):
 
     def test_previous_visual_signature_is_restored(self):
         for needle in (
-            'GATEWAY<span class="brand-accent">MONITOR</span>',
+            'FTTH<span class="brand-accent"> viewer</span>',
             '<h1>Connect to gateway</h1>',
             'Credentials are prefilled',
             '⚡ Speedtest by Ookla',

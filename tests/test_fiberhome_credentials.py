@@ -84,6 +84,31 @@ class FiberHomeCredentialTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(attempts, [GOOD_PASSWORD])
 
+    def test_unsupported_manufacturer_gets_no_credentials(self):
+        discovery = {
+            "gateway": "10.0.0.1",
+            "gateway_detected": True,
+            "selected_profile": None,
+        }
+        with patch.object(self.app_module, "run_discovery", return_value=discovery):
+            payload = self.client.get(
+                "/api/login-defaults?manufacturer_id=huawei"
+            ).get_json()
+        self.assertEqual(payload["username"], "")
+        self.assertEqual(payload["password"], "")
+        self.assertNotIn(GOOD_PASSWORD, json.dumps(payload))
+
+        config = json.loads(
+            (ROOT / "config" / "default_credentials.json").read_text(encoding="utf-8")
+        )
+        generic = next(
+            item for item in config["credential_suggestions"]
+            if item["key"] == "generic_user_supplied"
+        )
+        self.assertEqual(generic["default_username"], "")
+        self.assertEqual(generic["default_password"], "")
+        self.assertNotIn(GOOD_PASSWORD, json.dumps(generic))
+
     def test_no_silent_credential_substitution_in_app(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")
         self.assertNotIn("fallback_passwords", source)
@@ -95,6 +120,7 @@ class FiberHomeCredentialTests(unittest.TestCase):
         self.assertIn("function applyLoginDefault(", script)
         self.assertIn("Never replace a value the user has edited.", script)
         self.assertNotIn("$('userInput').value = data.username", script)
+        self.assertIn("field.value = value || ''", script)
         self.assertNotIn("$('passInput').value = data.password", script)
 
 

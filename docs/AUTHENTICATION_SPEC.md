@@ -116,10 +116,12 @@ A logout failure is reported by `/api/disconnect` as
 ## Credential suggestions
 
 `config/default_credentials.json` contains editable pre-fill values and their
-provenance. Each suggestion provides one default username and password; no
-fallback password is configured. `app.py` uses the submitted credentials
-exactly once, without substitution or retry, and the frontend leaves
-user-edited credential fields untouched.
+provenance. The FiberHome suggestion provides one default username and password;
+no fallback password is configured. The generic suggestion provides no default
+credentials, so unsupported manufacturers never inherit FiberHome values.
+`app.py` uses the submitted credentials exactly once, without substitution or
+retry, and the frontend leaves user-edited credential fields untouched while
+clearing stale defaults when a suggestion has none.
 
 No credential values are copied into `config/connectors.json`. The login form
 returns only gateway, supported flag, username, password, and message; no

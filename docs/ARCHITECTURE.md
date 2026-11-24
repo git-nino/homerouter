@@ -49,7 +49,7 @@ optional manufacturer hint; the backend owns connector selection.
 | `models/` | **Implemented** | Seven domains, 61 stable metric IDs, explicit availability states, source values, collections, connected devices, VoIP lines, safe `tel:` call actions. |
 | `config/connectors.json` | **Implemented, partial coverage** | One enabled, observed real profile (`fiberhome.hg6145f1`) plus synthetic test profiles in tests. No Huawei or ZTE profiles. |
 | `config/connector.schema.json` | **Implemented, partial validator** | Declarative profile contract. Validation uses an in-house subset of JSON Schema; see `docs/CONNECTOR_PROFILE_SPEC.md`. |
-| `config/default_credentials.json` | **Implemented** | Editable pre-fill values and provenance. No fallback password is configured. Not stored in profiles or public responses. |
+| `config/default_credentials.json` | **Implemented** | FiberHome pre-fill values and provenance; generic suggestion has no defaults. No fallback password is configured. Not stored in profiles or public responses. |
 | `config/equipment.json` | **Implemented** | Manufacturer selector catalog (`fiberhome`, `huawei`, `zte`) with `profiles` arrays linking manufacturer IDs to connector IDs. Only FiberHome currently has a link. |
 | `tools/connector_builder.py` | **Implemented** | `create`, `validate`, `validate-draft`, `import-draft`, `list`, declarative `configure`, canonical `map`, fixture-only `inspect`/`test`, trusted-handler/metric/manufacturer listings, and explicit `register --approve`. |
 | `profile_safety.py` | **Implemented** | Vendor-neutral method/path/scheme/gateway validation, gateway-pinned URL construction, redirect rejection, timeout-safe requests, and bounded response size shared by builder, manager, executor, and API boundary. |

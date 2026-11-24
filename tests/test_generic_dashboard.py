@@ -177,8 +177,8 @@ class GenericDashboardTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["gateway"], "192.168.1.1")
-        self.assertEqual(payload["username"], "user")
-        self.assertEqual(payload["password"], "user1234")
+        self.assertEqual(payload["username"], 'user')
+        self.assertEqual(payload["password"], 'user1234')
         self.assertTrue(payload["supported"])
         self.assertIsNone(payload["message"])
         for internal in (
@@ -200,8 +200,8 @@ class GenericDashboardTests(unittest.TestCase):
         payload = response.get_json()
         self.assertFalse(payload["supported"])
         self.assertEqual(payload["message"], UNSUPPORTED)
-        self.assertEqual(payload["username"], "user")
-        self.assertEqual(payload["password"], "user1234")
+        self.assertEqual(payload["username"], '')
+        self.assertEqual(payload["password"], '')
         for internal in ("profile", "evidence", "confidence", "profiles"):
             self.assertNotIn(internal, payload)
 
@@ -217,6 +217,13 @@ class GenericDashboardTests(unittest.TestCase):
         self.assertEqual(suggestion["default_password"], "user1234")
         self.assertNotIn("fallback_passwords", suggestion)
         self.assertIn("3bd1d55", suggestion["provenance"])
+        generic = next(
+            item for item in config["credential_suggestions"]
+            if item["key"] == "generic_user_supplied"
+        )
+        self.assertEqual(generic["default_username"], "")
+        self.assertEqual(generic["default_password"], "")
+        self.assertNotIn("user1234", json.dumps(generic))
 
         app_source = (ROOT / "app.py").read_text(encoding="utf-8")
         self.assertNotIn("user1234", app_source)

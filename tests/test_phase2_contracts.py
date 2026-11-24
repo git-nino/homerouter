@@ -340,8 +340,8 @@ class Phase2ContractTests(unittest.TestCase):
         self.assertEqual(payload["gateway"], "192.168.1.1")
         self.assertTrue(payload["gateway_detected"])
         self.assertTrue(payload["supported"])
-        self.assertEqual(payload["username"], "user")
-        self.assertEqual(payload["password"], "user1234")
+        self.assertEqual(payload["username"], 'user')
+        self.assertEqual(payload["password"], 'user1234')
         self.assertIsNone(payload["message"])
         for hidden in (
             "profile", "profile_id", "selected_profile", "evidence",
@@ -362,8 +362,8 @@ class Phase2ContractTests(unittest.TestCase):
         self.assertEqual(set(payload), EXPECTED_LOGIN_DEFAULTS_KEYS)
         self.assertFalse(payload["supported"])
         self.assertEqual(payload["message"], app_module.UNSUPPORTED_GATEWAY_MESSAGE)
-        self.assertEqual(payload["username"], "user")
-        self.assertEqual(payload["password"], "user1234")
+        self.assertEqual(payload["username"], '')
+        self.assertEqual(payload["password"], '')
 
     # ---------- 7. VoIP call action ----------
     def test_voip_call_action_and_tel_uri_behavior(self):

@@ -205,11 +205,12 @@ changes. Reports redact sensitive values and always report
 and a normal service reload. See `docs/PROFILE_BUILDER_SPEC.md`.
 
 `config/default_credentials.json` contains the editable pre-fill values retained
-from the previous dashboard and their provenance. Each profile has one
-pre-fill username and password; no fallback credential is configured or
-attempted. These are convenience defaults, not stored secrets; no values are
-copied into connector profiles, logs or success messages. No network
-authentication happens automatically after discovery.
+from the previous dashboard and their provenance. The FiberHome suggestion has
+one pre-fill username and password; no fallback credential is configured or
+attempted. Unsupported gateways receive empty fields, so FiberHome credentials
+are never copied to other manufacturers. These are convenience defaults, not
+stored secrets; no values are copied into connector profiles, logs or success
+messages. No network authentication happens automatically after discovery.
 
 ## Tests
 

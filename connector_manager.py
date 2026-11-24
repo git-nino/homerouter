@@ -1139,12 +1139,21 @@ class ConnectorManager:
                         "error", "missing_credential_field", f"{path}.{field}",
                         f"app.py expects the '{field}' credential field",
                     ))
-            for field in ("key", "default_username", "default_password", "provenance"):
+            for field in ("key", "provenance"):
                 if field in item and not str(item.get(field) or "").strip():
                     issues.append(ValidationIssue(
                         "error", "empty_credential_field", f"{path}.{field}",
                         f"credential field '{field}' must not be empty",
                     ))
+            # A suggestion may intentionally provide no defaults. Both fields
+            # must then be empty; a partial pair is ambiguous and rejected.
+            username = str(item.get("default_username") or "")
+            password = str(item.get("default_password") or "")
+            if bool(username) != bool(password):
+                issues.append(ValidationIssue(
+                    "error", "partial_credential_defaults", path,
+                    "default_username and default_password must both be set or both be empty",
+                ))
             if item.get("fallback_passwords") is not None and not isinstance(item.get("fallback_passwords"), list):
                 issues.append(ValidationIssue(
                     "error", "invalid_fallback_passwords", f"{path}.fallback_passwords",

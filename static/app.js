@@ -99,9 +99,10 @@ let appliedLoginDefaults = {
 
 function applyLoginDefault(id, value, previous) {
   const field = $(id);
-  if (!field || !value) return;
-  // Never replace a value the user has edited.
-  if (!field.value || field.value === previous) field.value = value;
+  if (!field) return;
+  // Never replace a value the user has edited. An empty default clears a
+  // previous default so unsupported manufacturers inherit no credentials.
+  if (!field.value || field.value === previous) field.value = value || '';
 }
 
 async function loadLoginDefaults() {
@@ -116,8 +117,8 @@ async function loadLoginDefaults() {
     applyLoginDefault('userInput', data.username, appliedLoginDefaults.username);
     applyLoginDefault('passInput', data.password, appliedLoginDefaults.password);
     appliedLoginDefaults = {
-      username: data.username || appliedLoginDefaults.username,
-      password: data.password || appliedLoginDefaults.password,
+      username: data.username || '',
+      password: data.password || '',
     };
     $('gatewayBadge').textContent = (data.gateway || 'detecting…') +
       (data.gateway_detected ? ' ✓' : ' (guess)');

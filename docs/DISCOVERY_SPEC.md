@@ -102,7 +102,9 @@ gateway, gateway_detected, supported, username, password, message
 
 - `supported` is true only when discovery selected a profile.
 - `username` and `password` are editable pre-fill values from the selected
-  profile's credential suggestion, or the generic suggestion when unsupported.
+  profile's credential suggestion. Unsupported gateways use the generic
+  suggestion, which has no defaults and returns empty strings; no credentials
+  are copied from FiberHome or another manufacturer.
 - `message` is `null` when supported, otherwise the standard unsupported
   message: "Unsupported or unidentified gateway. This device does not yet have
   a compatible connector profile."

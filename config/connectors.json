@@ -6,6 +6,8 @@
       "display_name": "FiberHome HG6145F1 (observed)",
       "status": "observed",
       "enabled": true,
+      "manufacturer_id": "fiberhome",
+      "model": "HG6145F1",
       "evidence": {
         "source": "Phase 1 audit of real HTTP responses from one HG6145F1 gateway; sensitive values redacted.",
         "verified": true,

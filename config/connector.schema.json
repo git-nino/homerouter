@@ -84,6 +84,15 @@
         "enabled": {
           "type": "boolean"
         },
+        "manufacturer_id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "model": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "firmware": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
         "evidence": {
           "type": "object",
           "additionalProperties": false,

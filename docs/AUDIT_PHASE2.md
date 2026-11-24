@@ -46,7 +46,7 @@ were removed from the user interface.
 | `models/universal.py` | Normalized seven-domain model with explicit availability states, collections, endpoint errors and safe dialer actions. |
 | `config/connector.schema.json` | Runtime profile contract, including logout, session validity, collections, transforms and fallbacks. |
 | `config/connectors.json` | FiberHome runtime profile. No credential values are stored. |
-| `config/default_credentials.json` | Editable pre-fill values retained from the pre-universal UI (`user` / `user1234`), the known FiberHome fallback (`user123456`) and provenance. These are convenience defaults, not stored secrets. |
+| `config/default_credentials.json` | Editable pre-fill values retained from the pre-universal UI (`user` / `user1234`) and their provenance. No fallback credential is configured. These are convenience defaults, not stored secrets. |
 | `templates/index.html`, `static/style.css` | Restored from `3bd1d55`, minus the obsolete auth-mode selector and generic panel. |
 | `static/app.js` | Restored interactions with universal-model data binding, stale refresh messaging and a profile-free login payload. |
 | `static/sw.js`, `static/manifest.webmanifest` | Cache bumped to `gwmon-v7`; local PWA icon references. |
@@ -64,8 +64,8 @@ were removed from the user interface.
   authentication flow.
 - Unknown firmware leaves the connector unresolved, returns the simple
   unsupported-gateway message and does not try arbitrary authentication.
-- When the unchanged FiberHome default password is submitted, the one known
-  configured fallback is tried through the same connector flow before failing.
+- The submitted username and password are used exactly once; no fallback
+  credential is substituted or retried.
 - The selected connector determines request fields and extraction. A second
   manufacturer profile requires no `app.py` or `static/app.js` change.
 - Missing, unsupported, invalid and failed fields never become `0`, `false` or
@@ -105,7 +105,7 @@ The integration tests prove:
 7. a second synthetic manufacturer profile is served by `/api/data` and rendered by the unchanged UI;
 8. gateway/username/password defaults are returned without authentication;
 9. a client-supplied profile ID is ignored and connector selection happens in the backend;
-10. user-overridden credentials are used, and the known FiberHome fallback stays in the same connector flow;
+10. user-overridden credentials are used exactly as submitted, with no silent fallback;
 11. unsupported gateways do not authenticate and return only a simple message;
 12. `app.py`, the template and the script contain no legacy vendor normalization or response-key fallbacks;
 13. the restored template and stylesheet match the `3bd1d55` presentation contract;

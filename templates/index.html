@@ -20,12 +20,14 @@
   <div class="top-actions">
     <span id="gatewayBadge" class="badge">detecting…</span>
     <span id="statusDot" class="dot dot-off" title="Connection status"></span>
-    <button id="speedBtn" class="btn btn-speed" hidden title="Run Speedtest by Ookla">Speedtest by Ookla</button>
-    <button id="disconnectBtn" class="btn icon-btn" hidden title="Disconnect" aria-label="Disconnect from router">
-      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-        <path d="M16 17l5-5-5-5"></path>
-        <path d="M21 12H9"></path>
+    <button id="disconnectBtn" class="btn icon-btn" hidden type="button"
+            title="Log out" aria-label="Log out">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+           aria-hidden="true" focusable="false">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+        <path d="m16 17 5-5-5-5" />
+        <path d="M21 12H9" />
       </svg>
     </button>
   </div>
@@ -45,9 +47,38 @@
 
       <form id="loginForm" autocomplete="on">
         <div class="field">
+          <label for="manufacturerInput">Manufacturer</label>
+          <div class="input-wrap">
+            <span class="input-icon" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect width="20" height="8" x="2" y="14" rx="2" />
+                <path d="M6.01 18H6" />
+                <path d="M10.01 18H10" />
+                <path d="M15 10v4" />
+                <path d="M17.84 7.17a4 4 0 0 0-5.66 0" />
+                <path d="M20.66 4.34a8 8 0 0 0-11.31 0" />
+              </svg>
+            </span>
+            <select id="manufacturerInput" name="manufacturer" aria-describedby="manufacturerHint">
+              <option value="">Loading manufacturers…</option>
+            </select>
+          </div>
+          <small class="hint" id="manufacturerHint">Choose the router manufacturer.</small>
+        </div>
+
+        <div class="field">
           <label for="gatewayInput">Gateway address</label>
           <div class="input-wrap">
-            <span class="input-icon">⇄</span>
+            <span class="input-icon" aria-hidden="true">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h.01" />
+                <path d="M2 8.82a15 15 0 0 1 20 0" />
+                <path d="M5 12.859a10 10 0 0 1 14 0" />
+                <path d="M8.5 16.429a5 5 0 0 1 7 0" />
+              </svg>
+            </span>
             <input id="gatewayInput" name="gateway" type="text" inputmode="url"
                    placeholder="192.168.1.1" value="192.168.1.1">
           </div>
@@ -87,9 +118,20 @@
     <div id="speedPanel" class="card speed-panel" hidden>
       <div class="panel-head">
         <h2>⚡ Speedtest by Ookla</h2>
-        <span id="speedState" class="pill">idle</span>
+        <div class="speed-head-actions">
+          <span id="speedState" class="pill">idle</span>
+          <button id="speedBtn" class="btn btn-speed" hidden type="button"
+                  title="Run Speedtest" aria-label="Run Speedtest">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m12 14 4-4" />
+              <path d="M3.34 19a10 10 0 1 1 17.32 0" />
+            </svg>
+            <span>Speedtest</span>
+          </button>
+        </div>
       </div>
-      <div id="speedIdle" class="speed-idle muted">Press <strong>Speedtest by Ookla</strong> above to measure download, upload and latency.</div>
+      <div id="speedIdle" class="speed-idle muted">Use the <strong>Speedtest</strong> button in this card to measure download, upload and latency.</div>
       <div id="speedProgress" class="speed-progress" hidden>
         <div class="spinner"></div><span id="speedProgressText">Working…</span>
       </div>

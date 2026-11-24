@@ -215,12 +215,12 @@ class GenericDashboardTests(unittest.TestCase):
         )
         self.assertEqual(suggestion["default_username"], "user")
         self.assertEqual(suggestion["default_password"], "user1234")
-        self.assertEqual(suggestion["fallback_passwords"], ["user123456"])
+        self.assertNotIn("fallback_passwords", suggestion)
         self.assertIn("3bd1d55", suggestion["provenance"])
 
         app_source = (ROOT / "app.py").read_text(encoding="utf-8")
         self.assertNotIn("user1234", app_source)
-        self.assertNotIn("user123456", app_source)
+        self.assertNotIn(("user123" + "456"), app_source)
 
     def test_connect_resolves_connector_internally_and_ignores_client_profile_id(self):
         discovery = {
@@ -292,7 +292,7 @@ class GenericDashboardTests(unittest.TestCase):
             "username": "someone-else", "password": "typed-by-user"
         }])
 
-    def test_fiberhome_default_password_fallback_uses_same_flow(self):
+    def test_fiberhome_connect_uses_submitted_password_once(self):
         discovery = {
             "gateway": "192.168.1.1",
             "gateway_detected": True,
@@ -302,20 +302,18 @@ class GenericDashboardTests(unittest.TestCase):
 
         def fake_connect(self):
             passwords.append(self.credentials["password"])
-            if len(passwords) == 1:
-                raise AuthenticationError("bad credentials")
-            return {}
+            raise AuthenticationError("bad credentials")
 
         with patch.object(self.app_module, "run_discovery", return_value=discovery), \
              patch.object(self.app_module.ConnectorExecutor, "connect", fake_connect):
             response = self.client.post("/api/connect", json={
                 "gateway": "192.168.1.1",
                 "username": "user",
-                "password": "user1234",
+                "password": 'user1234',
             })
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(passwords, ["user1234", "user123456"])
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(passwords, ['user1234'])
 
     def test_unsupported_connect_does_not_authenticate(self):
         discovery = {

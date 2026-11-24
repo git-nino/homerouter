@@ -22,12 +22,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from models.enums import Availability, Domain, ValueType
 from models.universal import METRICS
+from profile_safety import UnsafeProfileRequest, validate_endpoint_path, validate_method
 
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CATALOG = ROOT / "config" / "connectors.json"
 DEFAULT_CREDENTIALS = ROOT / "config" / "default_credentials.json"
 DEFAULT_SCHEMA = ROOT / "config" / "connector.schema.json"
+DEFAULT_EQUIPMENT = ROOT / "config" / "equipment.json"
+CONNECTOR_ID_RE = re.compile(r"^[a-z0-9]+(?:\.[a-z0-9_-]+)+$")
 
 EXTRACTION_METHODS = {
     "json_path", "json_path_multi", "regex", "header",
@@ -374,15 +377,38 @@ class ConnectorManager:
         catalog_path: Optional[Path] = None,
         credentials_path: Optional[Path] = None,
         schema_path: Optional[Path] = None,
+        equipment_path: Optional[Path] = None,
     ):
         self.catalog_path = Path(catalog_path) if catalog_path else DEFAULT_CATALOG
         self.credentials_path = Path(credentials_path) if credentials_path else DEFAULT_CREDENTIALS
         self.schema_path = Path(schema_path) if schema_path else DEFAULT_SCHEMA
+        self.equipment_path = Path(equipment_path) if equipment_path else DEFAULT_EQUIPMENT
+        # A temporary connector catalog (used by offline tools and tests) must
+        # not be judged against the shipped equipment associations. Validate
+        # cross-file references only for the live catalog or when a caller
+        # explicitly supplies the equipment catalog to check.
+        self.equipment_validation_enabled = (
+            equipment_path is not None
+            or self.catalog_path.resolve() == DEFAULT_CATALOG.resolve()
+        )
         self.catalog = _load_json(self.catalog_path)
+        self._loaded_catalog = self.catalog
         self.credentials = _load_json(self.credentials_path)
         self.schema = _load_json(self.schema_path)
         if not isinstance(self.schema, dict):
             raise ConnectorError(f"Schema in {self.schema_path} must be a JSON object")
+        # The equipment catalog is optional. Runtime loading is soft-failing in
+        # app.py; here an unreadable file is reported by validate() instead of
+        # preventing the manager from loading a valid connector catalog.
+        self.equipment_error: Optional[str] = None
+        try:
+            self.equipment = (
+                _load_json(self.equipment_path)
+                if self.equipment_path.exists() else {}
+            )
+        except ConnectorError as exc:
+            self.equipment = None
+            self.equipment_error = str(exc)
 
     @property
     def connectors(self) -> List[Dict[str, Any]]:
@@ -399,6 +425,43 @@ class ConnectorManager:
 
     def enabled_connectors(self) -> List[Dict[str, Any]]:
         return [item for item in self.connectors if item.get("enabled", True)]
+
+    def connectors_for_manufacturer(
+        self, manufacturer_id: str, profile_ids: Iterable[Any]
+    ) -> List[Dict[str, Any]]:
+        """Return enabled profiles associated with one manufacturer.
+
+        ``profile_ids`` comes from the equipment catalog and is authoritative for
+        membership and order. Optional profile metadata is a consistency guard:
+        when a profile declares a manufacturer it must agree with the selection.
+        A profile with no metadata remains eligible for legacy catalogs.
+        """
+
+        ident = str(manufacturer_id or "").strip()
+        if not ident:
+            return self.enabled_connectors()
+        by_id = {
+            connector.get("id"): connector
+            for connector in self.enabled_connectors()
+            if isinstance(connector.get("id"), str)
+        }
+        result: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for item in profile_ids:
+            if not isinstance(item, str):
+                continue
+            profile_id = item.strip()
+            if not profile_id or profile_id in seen:
+                continue
+            seen.add(profile_id)
+            connector = by_id.get(profile_id)
+            if connector is None:
+                continue
+            declared = connector.get("manufacturer_id")
+            if declared is not None and str(declared).strip() != ident:
+                continue
+            result.append(connector)
+        return result
 
     def credential_suggestion(self, key: str) -> Optional[Dict[str, Any]]:
         suggestions = _as_dict(self.credentials).get("credential_suggestions", [])
@@ -431,6 +494,8 @@ class ConnectorManager:
         report.extend(SchemaValidator(self.schema).validate(self.catalog))
         report.extend(self._validate_catalog())
         report.extend(self._validate_credentials())
+        if self.catalog is self._loaded_catalog:
+            report.extend(self._validate_equipment())
         return report
 
     def _validate_catalog(self) -> List[ValidationIssue]:
@@ -485,6 +550,117 @@ class ConnectorManager:
                 ))
 
         issues.extend(self._detect_exact_conflicts(exact_rules))
+        return issues
+
+    def _validate_equipment(self) -> List[ValidationIssue]:
+        """Check optional manufacturer -> connector profile associations."""
+
+        issues: List[ValidationIssue] = []
+        if not self.equipment_validation_enabled:
+            return issues
+        if self.equipment_error:
+            return [ValidationIssue(
+                "error", "equipment_catalog_unreadable", "$",
+                f"equipment catalog could not be read: {self.equipment_error}",
+            )]
+        equipment = self.equipment
+        if not isinstance(equipment, dict):
+            return [ValidationIssue(
+                "error", "equipment_catalog_invalid", "$",
+                "equipment catalog must be a JSON object",
+            )]
+
+        if equipment.get("schema_version") not in (1, "1", "1.0.0"):
+            issues.append(ValidationIssue(
+                "error", "equipment_schema_version", "$.schema_version",
+                "equipment schema_version must be 1",
+            ))
+        entries = equipment.get("manufacturers")
+        if not isinstance(entries, list):
+            issues.append(ValidationIssue(
+                "error", "equipment_manufacturers", "$.manufacturers",
+                "equipment catalog must contain a manufacturers array",
+            ))
+            return issues
+
+        seen_manufacturers: Set[str] = set()
+        for index, entry in enumerate(entries):
+            base = f"$.manufacturers[{index}]"
+            if not isinstance(entry, dict):
+                issues.append(ValidationIssue(
+                    "error", "equipment_manufacturer_entry", base,
+                    "manufacturer entries must be objects",
+                ))
+                continue
+            ident = str(entry.get("id") or "").strip()
+            name = str(entry.get("name") or "").strip()
+            if not ident:
+                issues.append(ValidationIssue(
+                    "error", "equipment_manufacturer_id", f"{base}.id",
+                    "manufacturer id must be a non-empty string",
+                ))
+            if not name:
+                issues.append(ValidationIssue(
+                    "error", "equipment_manufacturer_name", f"{base}.name",
+                    "manufacturer name must be a non-empty string",
+                ))
+            if ident in seen_manufacturers:
+                issues.append(ValidationIssue(
+                    "error", "duplicate_manufacturer_id", f"{base}.id",
+                    f"manufacturer id '{ident}' is used more than once",
+                ))
+            seen_manufacturers.add(ident)
+
+            profiles = entry.get("profiles", [])
+            if profiles is None:
+                profiles = []
+            if not isinstance(profiles, list):
+                issues.append(ValidationIssue(
+                    "error", "equipment_profiles", f"{base}.profiles",
+                    "manufacturer profiles must be an array when present",
+                ))
+                continue
+            seen_profiles: Set[str] = set()
+            for profile_index, reference in enumerate(profiles):
+                path = f"{base}.profiles[{profile_index}]"
+                profile_id = (
+                    str(reference).strip() if isinstance(reference, str) else ""
+                )
+                if not profile_id or not CONNECTOR_ID_RE.fullmatch(profile_id):
+                    issues.append(ValidationIssue(
+                        "error", "invalid_profile_reference", path,
+                        "profile references must be valid connector IDs",
+                    ))
+                    continue
+                if profile_id in seen_profiles:
+                    issues.append(ValidationIssue(
+                        "error", "duplicate_profile_reference", path,
+                        f"connector id '{profile_id}' is referenced more than once",
+                    ))
+                    continue
+                seen_profiles.add(profile_id)
+
+                connector = self.get(profile_id)
+                if connector is None:
+                    issues.append(ValidationIssue(
+                        "error", "unknown_profile_reference", path,
+                        f"connector id '{profile_id}' is not in the catalog",
+                    ))
+                    continue
+                if connector.get("enabled", True) is False:
+                    issues.append(ValidationIssue(
+                        "warning", "disabled_profile_reference", path,
+                        f"connector '{profile_id}' is disabled and will not be probed",
+                    ))
+                declared = connector.get("manufacturer_id")
+                if declared is not None and str(declared).strip() != ident:
+                    issues.append(ValidationIssue(
+                        "error", "profile_manufacturer_mismatch", path,
+                        (
+                            f"connector '{profile_id}' declares manufacturer "
+                            f"'{str(declared).strip()}' but is linked to '{ident}'"
+                        ),
+                    ))
         return issues
 
     def _scan_secrets(self, node: Any, path: str) -> List[ValidationIssue]:
@@ -702,6 +878,18 @@ class ConnectorManager:
             if not isinstance(endpoint, dict):
                 continue
             path = f"{base}.endpoints[{index}]"
+            try:
+                validate_method(endpoint.get("method", "GET"))
+            except UnsafeProfileRequest as exc:
+                issues.append(ValidationIssue(
+                    "error", "unsafe_endpoint_method", f"{path}.method", str(exc)
+                ))
+            try:
+                validate_endpoint_path(endpoint.get("path"))
+            except UnsafeProfileRequest as exc:
+                issues.append(ValidationIssue(
+                    "error", "unsafe_endpoint_path", f"{path}.path", str(exc)
+                ))
             scheme = endpoint.get("scheme", default_scheme)
             if scheme not in SCHEMES:
                 issues.append(ValidationIssue(

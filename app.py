@@ -5,8 +5,11 @@ UniversalModel -> dashboard. The legacy FiberHome view builder lives in
 ``legacy_view.py`` only for regression comparison and is never used here.
 """
 
+import hashlib
+import json
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
 
@@ -19,6 +22,7 @@ from connector_executor import (
 from connector_manager import ConnectorManager
 from gateway import detect_gateway
 from models.enums import Availability, Domain
+from profile_safety import UnsafeProfileRequest, normalize_gateway
 
 try:
     import speedtest
@@ -27,13 +31,19 @@ except ImportError:                                   # pragma: no cover
 
 app = Flask(__name__)
 
+CONFIG_DIR = Path(__file__).resolve().parent / "config"
+EQUIPMENT_CATALOG = CONFIG_DIR / "equipment.json"
+
 # Single-tenant local tool: one active router session at a time.
 state = {
     "gateway": detect_gateway(),
     "discovery": None,
+    "discovery_manufacturer_id": "",
+    "discovery_catalog_fingerprint": None,
     "manager": ConnectorManager(),
     "executor": None,
     "username": None,
+    "manufacturer_id": None,
     "credentials": None,
     "connected": False,
     "speedtest": {
@@ -55,6 +65,74 @@ UNSUPPORTED_GATEWAY_MESSAGE = (
 
 def _utc_now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _load_equipment_catalog():
+    """Read the equipment catalog and return ``(catalog, message)``."""
+
+    try:
+        with EQUIPMENT_CATALOG.open(encoding="utf-8") as fh:
+            catalog = json.load(fh)
+    except FileNotFoundError:
+        return None, "Manufacturer catalog is not configured."
+    except (OSError, ValueError):
+        return None, "Manufacturer catalog could not be read."
+
+    if not isinstance(catalog, dict):
+        return None, "Manufacturer catalog has an invalid format."
+
+    if catalog.get("schema_version") not in (1, "1", "1.0.0"):
+        return None, "Unsupported manufacturer catalog schema."
+
+    entries = catalog.get("manufacturers")
+    if not isinstance(entries, list):
+        return None, "Manufacturer catalog has no manufacturer list."
+    return catalog, ""
+
+
+def _equipment_catalog_fingerprint(catalog, message):
+    """Return a deterministic cache token for the equipment catalog snapshot."""
+
+    if message or not isinstance(catalog, dict):
+        return "invalid:" + (str(message) or "invalid_catalog")
+    canonical = json.dumps(
+        catalog, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _manufacturer_profile_ids(manufacturer_id, catalog=None):
+    """Return linked profile IDs for a known manufacturer.
+
+    ``None`` means no manufacturer was selected and discovery must keep its
+    legacy behavior. An empty list means the selection is known but has no
+    usable profiles; callers must fail closed instead of probing all profiles.
+    When a catalog snapshot is supplied, associations and the cache fingerprint
+    are derived from the same read.
+    """
+
+    ident = str(manufacturer_id or "").strip()
+    if not ident:
+        return None
+    if catalog is None:
+        catalog, _ = _load_equipment_catalog()
+    if not isinstance(catalog, dict):
+        return []
+    for entry in catalog.get("manufacturers") or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id") or "").strip() != ident:
+            continue
+        if not str(entry.get("name") or "").strip():
+            continue
+        references = entry.get("profiles")
+        if not isinstance(references, list):
+            return []
+        return [
+            str(reference).strip() for reference in references
+            if isinstance(reference, str) and str(reference).strip()
+        ]
+    return []
 
 
 def _safe_credential_suggestion(manager, key):
@@ -112,20 +190,48 @@ def _public_model_payload(model, speed):
     return payload
 
 
-def run_discovery(force=False, host=None):
-    """Detect the gateway, run unauthenticated probes, and match a profile."""
+def _validated_host(value):
+    """Return a bare gateway host or raise for URL/userinfo/metadata targets."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return normalize_gateway(text)
+    except UnsafeProfileRequest as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def run_discovery(force=False, host=None, manufacturer_id=None):
+    """Detect the gateway, run unauthenticated probes, and match a profile.
+
+    When ``manufacturer_id`` is omitted, legacy discovery probes every enabled
+    profile. When supplied, only profiles associated through the equipment
+    catalog and consistent with the profile's optional metadata are probed.
+    Cached results are valid only for the same manufacturer, host, detection
+    state, and equipment catalog snapshot.
+    """
+
+    catalog, catalog_message = _load_equipment_catalog()
+    catalog_fingerprint = _equipment_catalog_fingerprint(catalog, catalog_message)
+    selected_manufacturer = str(manufacturer_id or "").strip()
+    allowed_profile_ids = _manufacturer_profile_ids(selected_manufacturer, catalog)
 
     with _lock:
         manager = state["manager"]
         previous = state["discovery"]
         current = state["gateway"]
+        cached_manufacturer = str(state.get("discovery_manufacturer_id") or "")
+        cached_fingerprint = state.get("discovery_catalog_fingerprint")
 
-    requested_host = str(host or "").strip()
+    requested_host = _validated_host(host)
     cache_host = requested_host or current.get("gateway")
 
     if (
         not force
         and previous
+        and cached_manufacturer == selected_manufacturer
+        and cached_fingerprint == catalog_fingerprint
         and previous.get("gateway") == cache_host
         and previous.get("detected") == current.get("detected")
     ):
@@ -134,12 +240,19 @@ def run_discovery(force=False, host=None):
     detected = detect_gateway()
     with _lock:
         state["gateway"] = detected
-    host = requested_host or str(detected.get("gateway") or "").strip()
+    host = requested_host or _validated_host(detected.get("gateway"))
+
+    if allowed_profile_ids is None:
+        candidate_profiles = manager.enabled_connectors()
+    else:
+        candidate_profiles = manager.connectors_for_manufacturer(
+            selected_manufacturer, allowed_profile_ids
+        )
 
     candidates = []
     profile_rows = []
     probe_errors = []
-    for profile in manager.enabled_connectors():
+    for profile in candidate_profiles:
         profile_rows.append({
             "id": profile.get("id"),
             "display_name": profile.get("display_name"),
@@ -175,6 +288,11 @@ def run_discovery(force=False, host=None):
     evidence = (
         "Unknown firmware: no pre-authentication rule matched a known connector profile."
     )
+    if allowed_profile_ids is not None and not candidate_profiles:
+        evidence = (
+            "Unknown firmware or unsupported manufacturer: no enabled connector "
+            "profiles are associated with the selected manufacturer."
+        )
     if candidates:
         weight, profile, identification = max(candidates, key=lambda item: item[0])
         if not identification["ambiguous"]:
@@ -205,6 +323,8 @@ def run_discovery(force=False, host=None):
     }
     with _lock:
         state["discovery"] = result
+        state["discovery_manufacturer_id"] = selected_manufacturer
+        state["discovery_catalog_fingerprint"] = catalog_fingerprint
     return result
 
 
@@ -330,6 +450,48 @@ def _apply_speedtest_to_model(model, speed):
 
 
 # --------------------------------------------------------------------------
+# Manufacturer catalog
+# --------------------------------------------------------------------------
+def load_manufacturers():
+    """Read the manufacturer catalog without exposing internal paths.
+
+    Returns ``(manufacturers, message)``. An absent, empty or invalid catalog
+    is a soft failure: connector-driven connection workflow keeps working and
+    the UI simply has no manufacturers to offer. Profile associations remain
+    internal and are never exposed to the browser.
+    """
+    catalog, message = _load_equipment_catalog()
+    if message:
+        return [], message
+
+    entries = catalog.get("manufacturers")
+    manufacturers = []
+    seen = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ident = str(entry.get("id") or "").strip()
+        name = str(entry.get("name") or "").strip()
+        if not ident or not name or ident in seen:
+            continue
+        seen.add(ident)
+        manufacturers.append({"id": ident, "name": name})
+
+    if not manufacturers:
+        return [], "No manufacturers are configured."
+    return manufacturers, ""
+
+
+def _request_manufacturer_id():
+    """Read an optional manufacturer hint without changing public contracts."""
+
+    value = request.args.get("manufacturer_id")
+    if value is None:
+        value = request.args.get("manufacturer")
+    return str(value or "").strip()
+
+
+# --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
 @app.route("/")
@@ -343,6 +505,16 @@ def api_gateway():
         return jsonify(state["gateway"])
 
 
+@app.route("/api/manufacturers")
+def api_manufacturers():
+    manufacturers, message = load_manufacturers()
+    return jsonify({
+        "ok": bool(manufacturers),
+        "manufacturers": manufacturers,
+        "message": message,
+    })
+
+
 @app.route("/api/login-defaults")
 def api_login_defaults():
     """Return only the fields needed by the simple login form.
@@ -351,13 +523,13 @@ def api_login_defaults():
     only and never calls the selected connector's authentication flow.
     """
 
-    discovery = run_discovery()
+    discovery = run_discovery(manufacturer_id=_request_manufacturer_id())
     return jsonify(_login_defaults(state["manager"], discovery))
 
 
 @app.route("/api/discovery")
 def api_discovery():
-    return jsonify(run_discovery())
+    return jsonify(run_discovery(manufacturer_id=_request_manufacturer_id()))
 
 
 @app.route("/api/session")
@@ -367,6 +539,7 @@ def api_session():
         return jsonify({
             "connected": state["connected"] and executor is not None,
             "gateway": state["gateway"].get("gateway"),
+            "manufacturer_id": state.get("manufacturer_id"),
         })
 
 
@@ -376,16 +549,35 @@ def api_connect():
     username = str(payload.get("username") or "").strip()
     password = payload.get("password")
     requested_host = str(payload.get("gateway") or "").strip()
+    try:
+        requested_host = _validated_host(requested_host)
+    except ValueError as exc:
+        return jsonify({"ok": False, "message": f"Invalid gateway: {exc}"}), 400
 
     if not username:
         return jsonify({"ok": False, "message": "Enter the gateway username."}), 400
     if password is None:
         return jsonify({"ok": False, "message": "Enter the gateway password."}), 400
 
+    # The selector constrains profile discovery. A client-supplied profile_id is
+    # never read, and an unvalidatable selection must never fall back to all
+    # profiles.
+    manufacturer_id = payload.get("manufacturer_id", payload.get("manufacturer"))
+    manufacturer_id = str(manufacturer_id).strip() if manufacturer_id else ""
+    manufacturers, message = load_manufacturers()
+    known_manufacturers = {item["id"] for item in manufacturers}
+    if manufacturer_id and manufacturer_id not in known_manufacturers:
+        detail = message if message and not known_manufacturers else "Unknown manufacturer."
+        return jsonify({"ok": False, "message": detail}), 400
+
     with _lock:
         manager = state["manager"]
 
-    discovery = run_discovery(force=bool(requested_host), host=requested_host or None)
+    discovery = run_discovery(
+        force=bool(requested_host),
+        host=requested_host or None,
+        manufacturer_id=manufacturer_id,
+    )
     profile_id = discovery.get("selected_profile")
     host = discovery.get("gateway") or requested_host
     profile = manager.get(profile_id) if profile_id else None
@@ -395,31 +587,16 @@ def api_connect():
             "message": UNSUPPORTED_GATEWAY_MESSAGE,
         }), 400
 
-    credential_key = ((profile.get("auth") or {}).get("credential_suggestion_key"))
-    suggestion = manager.credential_suggestion(credential_key) or {}
-    default_password = str(suggestion.get("default_password") or "")
-    passwords = [str(password)]
-    if default_password and passwords[0] == default_password:
-        for candidate in suggestion.get("fallback_passwords") or []:
-            candidate = str(candidate)
-            if candidate and candidate not in passwords:
-                passwords.append(candidate)
-
-    executor = None
-    for candidate in passwords:
-        attempt = ConnectorExecutor(
-            profile, host,
-            credentials={"username": username, "password": candidate},
-            manager=manager,
-        )
-        try:
-            attempt.connect()
-        except (AuthenticationError, ExecutorError):
-            continue
-        executor = attempt
-        break
-
-    if executor is None:
+    # Use the submitted password exactly once. No default substitution,
+    # fallback password, or silent retry is performed.
+    executor = ConnectorExecutor(
+        profile, host,
+        credentials={"username": username, "password": str(password)},
+        manager=manager,
+    )
+    try:
+        executor.connect()
+    except (AuthenticationError, ExecutorError):
         return jsonify({
             "ok": False,
             "message": "Authentication failed. Check the username and password.",
@@ -428,6 +605,7 @@ def api_connect():
     with _lock:
         state["executor"] = executor
         state["username"] = username
+        state["manufacturer_id"] = manufacturer_id
         state["credentials"] = {"username": username, "profile_id": profile_id}
         state["connected"] = True
         state["gateway"] = {
@@ -439,6 +617,7 @@ def api_connect():
         "ok": True,
         "message": "Connected.",
         "gateway": host,
+        "manufacturer_id": manufacturer_id,
     })
 
 
@@ -457,6 +636,7 @@ def api_data():
             state["connected"] = False
             state["executor"] = None
             state["credentials"] = None
+            state["manufacturer_id"] = None
         return jsonify({"error": "Router session expired. Please reconnect."}), 401
     except (AuthenticationError, ExecutorError) as exc:
         return jsonify({"error": str(exc)}), 502
@@ -470,6 +650,7 @@ def api_disconnect():
         state["executor"] = None
         state["credentials"] = None
         state["username"] = None
+        state["manufacturer_id"] = None
         state["connected"] = False
 
     router_logout = True

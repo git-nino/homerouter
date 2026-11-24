@@ -22,6 +22,16 @@ from connector_manager import BODY_FORMATS, SCHEMES, ConnectorManager
 from models.enums import Availability, CompatibilityState, Domain
 from models.phone import normalize_phone_number
 from models.universal import METRICS, ConnectedDevice, UniversalModel
+from profile_safety import (
+    UnsafeProfileRequest,
+    build_request_url,
+    is_redirect,
+    normalize_gateway,
+    read_bounded_text,
+    validate_endpoint_path,
+    validate_method,
+    validate_scheme,
+)
 
 
 _MISSING = object()
@@ -97,8 +107,8 @@ def _compare(value: Any, operator: str, expected: Any) -> bool:
     return False
 
 
-def _parse_json_response(response: requests.Response) -> Tuple[Dict[str, Any], str]:
-    text = (response.text or "").strip()
+def _parse_json_text(text: str) -> Tuple[Dict[str, Any], str]:
+    text = (text or "").strip()
     if "\n\n" in text:               # some firmware prepends a Content-type line
         text = text.split("\n\n", 1)[1].strip()
     if not text:
@@ -182,17 +192,11 @@ class ConnectorExecutor:
         self.connector = connector
         self.profile_id = str(connector.get("id", ""))
         self.display_name = str(connector.get("display_name", self.profile_id))
-        gateway_text = str(gateway).strip().rstrip("/")
-        for prefix in ("http://", "https://"):
-            if gateway_text.lower().startswith(prefix):
-                gateway_text = gateway_text[len(prefix):]
-                break
-        self.gateway = gateway_text.split("/", 1)[0]
-        if not self.gateway:
-            raise ExecutorError("A gateway address is required.")
-        self.scheme = str(connector.get("scheme", "http")).lower()
-        if self.scheme not in SCHEMES:
-            raise ExecutorError(f"unsupported connector scheme {self.scheme!r}")
+        try:
+            self.gateway = normalize_gateway(gateway)
+            self.scheme = validate_scheme(connector.get("scheme", "http"))
+        except UnsafeProfileRequest as exc:
+            raise ExecutorError(str(exc)) from exc
         self.credentials = dict(credentials or {})
         self.username = str(self.credentials.get("username", ""))
         self.password = self.credentials.get("password", "")
@@ -395,50 +399,61 @@ class ConnectorExecutor:
         body = self._resolve_map(endpoint.get("body"), endpoint_id)
         headers = self._resolve_map(endpoint.get("headers"), endpoint_id)
         timeout = float(endpoint.get("timeout_seconds", 6))
-        scheme = str(endpoint.get("scheme", self.scheme)).lower()
-        if scheme not in SCHEMES:
-            raise EndpointError(f"unsupported endpoint scheme {scheme!r}")
+        try:
+            method = validate_method(endpoint.get("method", "GET"))
+            scheme = validate_scheme(endpoint.get("scheme", self.scheme))
+            url = build_request_url(scheme, self.gateway, endpoint.get("path"))
+        except UnsafeProfileRequest as exc:
+            raise EndpointError(str(exc)) from exc
         body_format = str(endpoint.get("body_format", "form")).lower()
         if body_format not in BODY_FORMATS:
             raise EndpointError(f"unsupported body format {body_format!r}")
-        url = f"{scheme}://{self.gateway}{endpoint['path']}"
         request_kwargs: Dict[str, Any] = {
             "params": query or None,
             "headers": headers or None,
             "timeout": timeout,
             "verify": True,
+            "allow_redirects": False,
+            "stream": True,
         }
         if endpoint.get("auth") is False:
             request_kwargs["auth"] = _NoAuth()
-        if str(endpoint.get("method", "GET")).upper() == "POST":
+        if method == "POST":
             if body_format == "json":
                 request_kwargs["json"] = body or None
             else:
                 request_kwargs["data"] = body or None
 
         try:
-            response = self.http.request(
-                str(endpoint.get("method", "GET")).upper(), url, **request_kwargs
-            )
+            response = self.http.request(method, url, **request_kwargs)
         except requests.RequestException as exc:
             raise EndpointError(
                 f"network request failed ({type(exc).__name__})"
             ) from exc
-        if response.status_code >= 400:
-            raise EndpointError(f"HTTP {response.status_code}")
-
-        text = response.text or ""
-        if endpoint.get("format", "json") == "json":
-            payload, text = _parse_json_response(response)
-        else:
-            payload = {}
-        result = EndpointResult(
-            endpoint_id=endpoint_id,
-            payload=payload,
-            text=text,
-            headers={str(key): str(value) for key, value in response.headers.items()},
-            status_code=response.status_code,
-        )
+        try:
+            if is_redirect(response.status_code):
+                raise EndpointError(f"unsafe HTTP {response.status_code} redirect")
+            if response.status_code >= 400:
+                raise EndpointError(f"HTTP {response.status_code}")
+            try:
+                text = read_bounded_text(response)
+            except UnsafeProfileRequest as exc:
+                raise EndpointError(str(exc)) from exc
+            if endpoint.get("format", "json") == "json":
+                payload, text = _parse_json_text(text)
+            else:
+                payload = {}
+            result = EndpointResult(
+                endpoint_id=endpoint_id,
+                payload=payload,
+                text=text,
+                headers={str(key): str(value) for key, value in response.headers.items()},
+                status_code=response.status_code,
+            )
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
         self.endpoint_results[endpoint_id] = result
         return result
 

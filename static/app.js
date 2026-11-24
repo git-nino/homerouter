@@ -19,6 +19,30 @@ function esc(value) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function show(id, visible) { $(id).hidden = !visible; }
+
+/* A Speedtest result belongs to the page that started it. The server keeps the
+   last result for diagnostics and /api/data compatibility, so a fresh page must
+   not replay it through renderSpeed(). */
+let speedResultFromThisPage = false;
+
+function resetSpeedDisplay() {
+  speedResultFromThisPage = false;
+  if (speedTimer) { clearInterval(speedTimer); speedTimer = null; }
+  if (speedWatchTimer) { clearInterval(speedWatchTimer); speedWatchTimer = null; }
+  $('speedState').textContent = 'idle';
+  $('speedState').className = 'pill';
+  setText('spDown', null);
+  setText('spUp', null);
+  setText('spPing', null);
+  setText('spJitter', null);
+  $('spServer').textContent = '';
+  $('speedError').textContent = '';
+  show('speedError', false);
+  show('speedProgress', false);
+  show('speedResult', false);
+  show('speedIdle', true);
+}
+
 function metric(model, domain, metricId) {
   const domains = (model && model.domains) || {};
   return ((domains[domain] || {})[metricId]) || {
@@ -68,14 +92,33 @@ function collectionChips(model, name) {
 }
 
 /* ---------- simple login defaults (identification is backend-only) ---------- */
+let appliedLoginDefaults = {
+  username: $('userInput') ? $('userInput').value : '',
+  password: $('passInput') ? $('passInput').value : '',
+};
+
+function applyLoginDefault(id, value, previous) {
+  const field = $(id);
+  if (!field || !value) return;
+  // Never replace a value the user has edited.
+  if (!field.value || field.value === previous) field.value = value;
+}
+
 async function loadLoginDefaults() {
   try {
-    const res = await fetch('/api/login-defaults');
+    const selector = $('manufacturerInput');
+    const selected = selector && selector.value ? selector.value : '';
+    const query = selected ? '?manufacturer_id=' + encodeURIComponent(selected) : '';
+    const res = await fetch('/api/login-defaults' + query);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (data.gateway) $('gatewayInput').value = data.gateway;
-    if (data.username) $('userInput').value = data.username;
-    if (data.password) $('passInput').value = data.password;
+    applyLoginDefault('userInput', data.username, appliedLoginDefaults.username);
+    applyLoginDefault('passInput', data.password, appliedLoginDefaults.password);
+    appliedLoginDefaults = {
+      username: data.username || appliedLoginDefaults.username,
+      password: data.password || appliedLoginDefaults.password,
+    };
     $('gatewayBadge').textContent = (data.gateway || 'detecting…') +
       (data.gateway_detected ? ' ✓' : ' (guess)');
 
@@ -86,6 +129,52 @@ async function loadLoginDefaults() {
     // Keep editable fallback values from the markup; no connector details shown.
     $('loginMsg').className = 'msg error';
     $('loginMsg').textContent = 'Could not check the local gateway. You can still edit the fields and connect.';
+  }
+}
+
+/* ---------- manufacturer catalog ---------- */
+async function loadManufacturers() {
+  const select = $('manufacturerInput');
+  const hint = $('manufacturerHint');
+  if (!select) return;
+
+  const previous = select.value;
+  try {
+    const res = await fetch('/api/manufacturers');
+    const data = await res.json();
+    const list = Array.isArray(data.manufacturers) ? data.manufacturers : [];
+
+    select.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = list.length ? 'Select manufacturer' : 'No manufacturers configured';
+    select.appendChild(placeholder);
+
+    list.forEach((item) => {
+      if (!item || !item.id || !item.name) return;
+      const option = document.createElement('option');
+      option.value = item.id;
+      option.textContent = item.name;
+      select.appendChild(option);
+    });
+
+    if (!list.length) {
+      select.disabled = true;
+      if (hint) hint.textContent = data.message || 'Manufacturer catalog is unavailable.';
+      return;
+    }
+
+    select.disabled = false;
+    if (list.some((item) => item && item.id === previous)) select.value = previous;
+    if (hint) hint.textContent = 'Choose the router manufacturer.';
+  } catch (e) {
+    select.replaceChildren();
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Manufacturer list unavailable';
+    select.appendChild(option);
+    select.disabled = true;
+    if (hint) hint.textContent = 'Manufacturer list could not be loaded.';
   }
 }
 
@@ -107,6 +196,7 @@ $('loginForm').addEventListener('submit', async (event) => {
         gateway: $('gatewayInput').value.trim(),
         username: $('userInput').value.trim(),
         password: $('passInput').value,
+        manufacturer_id: $('manufacturerInput') ? $('manufacturerInput').value : '',
       }),
     });
     const data = await res.json();
@@ -134,6 +224,7 @@ $('showPass').addEventListener('click', () => {
 });
 
 function enterDashboard() {
+  resetSpeedDisplay();
   show('loginView', false);
   show('dashView', true);
   show('speedBtn', true);
@@ -187,6 +278,7 @@ function renderVoip(model) {
 }
 
 function renderSpeed(model) {
+  if (!speedResultFromThisPage) return;
   const download = metric(model, 'speed_test', 'speed_test.download_mbps');
   const upload = metric(model, 'speed_test', 'speed_test.upload_mbps');
   const hasResult = READABLE_STATES.has(download.availability) &&
@@ -337,6 +429,7 @@ $('speedBtn').addEventListener('click', async () => {
     const res = await fetch('/api/speedtest', { method: 'POST' });
     const data = await res.json();
     if (!data.ok) { alert(data.message || 'Could not start test.'); return; }
+    speedResultFromThisPage = true;
     show('speedPanel', true);
     show('speedIdle', false);
     show('speedResult', false);
@@ -399,8 +492,7 @@ $('disconnectBtn').addEventListener('click', async () => {
 
 function leaveDashboard(message) {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  if (speedTimer) { clearInterval(speedTimer); speedTimer = null; }
-  if (speedWatchTimer) { clearInterval(speedWatchTimer); speedWatchTimer = null; }
+  resetSpeedDisplay();
   show('dashView', false);
   show('loginView', true);
   show('speedBtn', false);
@@ -422,6 +514,12 @@ if ('serviceWorker' in navigator) {
 
 /* ---------- init ---------- */
 async function init() {
+  resetSpeedDisplay();
+  await loadManufacturers();
+  const manufacturerSelect = $('manufacturerInput');
+  if (manufacturerSelect) {
+    manufacturerSelect.addEventListener('change', () => { loadLoginDefaults(); });
+  }
   await loadLoginDefaults();
   try {
     const res = await fetch('/api/session');

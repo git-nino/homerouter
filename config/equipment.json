@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "manufacturers": [
+    {
+      "id": "fiberhome",
+      "name": "FiberHome",
+      "profiles": ["fiberhome.hg6145f1"]
+    },
+    {
+      "id": "huawei",
+      "name": "Huawei",
+      "profiles": []
+    },
+    {
+      "id": "zte",
+      "name": "ZTE",
+      "profiles": []
+    }
+  ]
+}

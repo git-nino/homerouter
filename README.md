@@ -81,6 +81,34 @@ If no service manager is available (e.g. WSL without systemd, or a container),
 or a Termux release uses the older `sv-*` commands, the installer falls back
 automatically to a `start.sh` launcher writing `gwmon.log` in the app directory.
 
+### Safe uninstall
+
+Stop/disable only the `gwmon` service, then remove only the application
+directory, virtualenv and service definition. Preserve any user data you want
+to keep (for example `infos.txt`, `random_topic.txt` or a customized `config/`
+directory) before deleting the application directory.
+
+Termux:
+
+```bash
+svc-stop gwmon 2>/dev/null || sv down gwmon 2>/dev/null || true
+svc-disable gwmon 2>/dev/null || sv-disable gwmon 2>/dev/null || true
+rm -rf "$HOME/projects/homerouter" "$HOME/.venvs/gwmon" \
+       "$PREFIX/var/service/gwmon"
+```
+
+Ubuntu/Debian with systemd:
+
+```bash
+sudo systemctl disable --now gwmon
+sudo rm -f /etc/systemd/system/gwmon.service
+sudo systemctl daemon-reload
+rm -rf "$HOME/projects/homerouter" "$HOME/.venvs/gwmon"
+```
+
+These uninstall steps never remove Termux itself, SSH configuration, keys,
+other packages, or other applications.
+
 ## PWA (install without HTTPS)
 
 Open **http://localhost:7000** in Chrome on the phone and use the browser's
@@ -90,21 +118,35 @@ work without a certificate. Opening the app via `http://<phone-ip>:7000` will
 show the dashboard, but PWA installation will not be offered — use `localhost`
 for that.
 
-## Universal runtime (Phase 2)
+## Current architecture
 
 The live path is:
 
 ```
 gateway detection → device identification → ConnectorManager → connectors.json
-→ ConnectorExecutor → auth handlers + HTTP → profile extraction
+→ ConnectorExecutor → trusted auth handlers + HTTP → profile extraction
 → UniversalModel → unified dashboard
 ```
 
-`auth_handlers.py` contains a controlled registry; the FiberHome handler delegates
-AES encryption to the existing `gateway.fhencrypt` helper. Profile JSON never
-evaluates code. `legacy_view.py` is kept only for regression comparison and is
-not imported by `app.py`. See `docs/AUDIT_PHASE2.md` for evidence and the
-remaining physical-device check.
+Connector profiles are declarative JSON in `config/connectors.json`, validated
+against `config/connector.schema.json`; editable credential pre-fills live in
+`config/default_credentials.json`. `auth_handlers.py` contains a fixed registry
+of trusted Python handlers. The FiberHome handler delegates AES encryption to
+`gateway.fhencrypt`; profile JSON never evaluates code. `legacy_view.py` is kept
+only for physical-equivalence comparison and is not imported by `app.py`.
+
+Authoritative contracts and status are documented in
+`docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`,
+`docs/CONNECTOR_PROFILE_SPEC.md`, `docs/AUTHENTICATION_SPEC.md`,
+`docs/DISCOVERY_SPEC.md`, `docs/PROFILE_BUILDER_SPEC.md`, and
+`docs/MIGRATION_PLAN.md`.
+
+Current limitations: schema validation is an in-house subset; only one real
+profile (FiberHome HG6145F1) exists; physical FiberHome equivalence is not
+evaluated. The Profile Builder now supports an offline, credential-free dry run
+against sanitized fixtures. The manufacturer selector constrains discovery to
+associated enabled profiles, while requests that omit it retain legacy
+all-profile discovery.
 
 ## Restored dashboard and internal connector selection
 
@@ -139,14 +181,35 @@ python -m tools.connector_builder validate
 python -m tools.connector_builder create --id vendor.model --display-name "Vendor Model"
 python -m tools.connector_builder create --id vendor.model --display-name "Vendor Model" \
   --output config/connectors.json
+
+# Validate a standalone draft; import only after explicit review
+python -m tools.connector_builder validate-draft output/vendor.model.json
+python -m tools.connector_builder import-draft output/vendor.model.json --approve
+
+# Inspect observed field paths and run a redacted offline test
+python -m tools.connector_builder manufacturers --json
+python -m tools.connector_builder metrics --json
+python -m tools.connector_builder inspect output/vendor.model.json \
+  --fixture output/vendor.model.fixture.json --json
+python -m tools.connector_builder test output/vendor.model.json \
+  --fixture output/vendor.model.fixture.json --json
+
+# Register a reviewed profile and its manufacturer association
+python -m tools.connector_builder register output/vendor.model.json \
+  --manufacturer vendor --model Model --approve
 ```
 
+`inspect` and `test` are fixture-only: no network, no credentials, and no router
+changes. Reports redact sensitive values and always report
+`device_compatibility: not_evaluated`. Registration requires explicit approval
+and a normal service reload. See `docs/PROFILE_BUILDER_SPEC.md`.
+
 `config/default_credentials.json` contains the editable pre-fill values retained
-from the previous dashboard, their provenance, and one known FiberHome fallback
-password used only when the unchanged default was submitted. These are
-convenience defaults, not stored secrets; no values are copied into connector
-profiles, logs or success messages. No network authentication happens
-automatically after discovery.
+from the previous dashboard and their provenance. Each profile has one
+pre-fill username and password; no fallback credential is configured or
+attempted. These are convenience defaults, not stored secrets; no values are
+copied into connector profiles, logs or success messages. No network
+authentication happens automatically after discovery.
 
 ## Tests
 
@@ -164,15 +227,16 @@ python3 -m unittest discover -s tests -v
 - `auth_handlers.py` — controlled auth registry; no profile text is executed as code
 - `legacy_view.py` — legacy comparison builder only; never used by the live app
 - `config/connectors.json`, `config/connector.schema.json` — connector profiles and their JSON schema
-- `config/default_credentials.json` — editable credential pre-fill values, fallback and provenance
-- `tools/connector_builder.py` — `create`, `validate`, and `list` CLI
-- `tests/` — model, phone, connector, executor, API and UI tests, including a second synthetic manufacturer profile
+- `config/default_credentials.json` — editable credential pre-fill values and provenance
+- `tools/connector_builder.py` — profile authoring, validation, offline inspect/test, and registration CLI
+- `profile_safety.py` — shared method/path/gateway/redirect/response-size safety boundary
+- `tests/` — model, phone, connector, executor, API and UI tests, including a second synthetic manufacturer profile and `tests/test_phase2_contracts.py` frozen API/model/auth/discovery contracts
 - `templates/index.html`, `static/*` — responsive dashboard UI consuming only `UniversalModel` metric IDs
 - `requirements.txt`, `requirements-termux.txt` — dependencies
 - `run.sh` — simple desktop launcher
 - `install.sh` — universal Termux/Ubuntu installer + service setup (works via `curl | bash`)
 - `.gitignore` — keeps caches, venvs and logs out of git
 - `static/manifest.webmanifest`, `static/sw.js`, `static/icon-*.png`, `static/favicon.png`, `static/dashboard-icons-router.svg` — locally served PWA assets from Dashboard Icons `router` (see `docs/ICON_ATTRIBUTION.md`)
-- `docs/AUDIT_PHASE1.md` — Phase 1 architecture audit and phased migration plan
-- `docs/AUDIT_PHASE2.md` — Phase 2 integration evidence and physical-device acceptance criteria
+- `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/CONNECTOR_PROFILE_SPEC.md`, `docs/AUTHENTICATION_SPEC.md`, `docs/DISCOVERY_SPEC.md`, `docs/PROFILE_BUILDER_SPEC.md`, `docs/MIGRATION_PLAN.md` — authoritative current contracts and milestone status
+- `docs/AUDIT_PHASE1.md`, `docs/AUDIT_PHASE2.md`, `docs/PHASE3_1_HARDENING_REPORT.md` — historical records; may contain stale proposals or test counts
 - `docs/ICON_ATTRIBUTION.md` — selected Dashboard Icons asset, source URL and license

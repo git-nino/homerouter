@@ -82,7 +82,13 @@ html, body {
 .btn:hover { border-color: var(--accent); color: #fff; }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: .55; cursor: wait; }
+.icon { width: 16px; height: 16px; flex: 0 0 auto; stroke-width: 2; }
+.btn .icon { width: 15px; height: 15px; }
+.btn-icon { display: inline-flex; align-items: center; justify-content: center; padding: 7px 9px; }
 .btn-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: #04141f;
   background: linear-gradient(135deg, #59c8f5, #20d27d);
   border-color: transparent;
@@ -157,7 +163,8 @@ h2 { font-size: 13px; margin: 0; letter-spacing: .03em; }
 label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
 .input-wrap { position: relative; display: flex; align-items: center; }
 .input-icon { position: absolute; left: 11px; color: var(--muted); font-size: 13px; pointer-events: none; }
-input[type=text], input[type=password] {
+.input-icon .icon { width: 14px; height: 14px; display: block; }
+input[type=text], input[type=password], select {
   width: 100%;
   background: #0e131c;
   border: 1px solid var(--border);
@@ -194,6 +201,7 @@ input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0, 209, 17
 
 /* ---------- speedtest ---------- */
 .speed-panel { margin-bottom: 14px; }
+.speed-head-actions { display: flex; align-items: center; gap: 8px; }
 .speed-idle { padding: 10px 0 2px; }
 .speed-progress { display: flex; align-items: center; gap: 12px; padding: 18px 0 8px; color: var(--accent); font-size: 13px; }
 .spinner {

@@ -4,12 +4,16 @@
     {
       "id": "fiberhome",
       "name": "FiberHome",
-      "profiles": ["fiberhome.hg6145f1"]
+      "profiles": [
+        "fiberhome.hg6145f1"
+      ]
     },
     {
       "id": "huawei",
       "name": "Huawei",
-      "profiles": []
+      "profiles": [
+        "huawei.hg8145x6"
+      ]
     },
     {
       "id": "zte",

@@ -198,7 +198,8 @@
               "system",
               "connected_devices",
               "speed_test",
-              "unclassified"
+              "unclassified",
+              "wifi"
             ]
           }
         },
@@ -324,7 +325,8 @@
             "form",
             "session",
             "token",
-            "fiberhome_aes"
+            "fiberhome_aes",
+            "huawei_nonce_form"
           ]
         },
         "order": {
@@ -454,6 +456,14 @@
             "form",
             "json"
           ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "verify_tls": {
+          "type": "boolean"
         }
       }
     },
@@ -507,6 +517,9 @@
         },
         "transforms": {
           "$ref": "#/$defs/stringList"
+        },
+        "transform_options": {
+          "type": "object"
         }
       }
     },
@@ -540,8 +553,7 @@
       "required": [
         "id",
         "endpoint",
-        "method",
-        "expression"
+        "method"
       ],
       "properties": {
         "id": {
@@ -562,7 +574,8 @@
             "keyed_objects",
             "regex",
             "header",
-            "literal"
+            "literal",
+            "js_constructor_objects"
           ]
         },
         "expression": {
@@ -629,6 +642,10 @@
         },
         "availability_on_missing": {
           "$ref": "#/$defs/availability"
+        },
+        "constructor": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

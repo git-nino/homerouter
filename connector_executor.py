@@ -30,6 +30,7 @@ from profile_safety import (
     read_bounded_text,
     validate_endpoint_path,
     validate_method,
+    validate_port,
     validate_scheme,
 )
 
@@ -72,19 +73,32 @@ class EndpointResult:
 def _dig(data: Any, field_path: str) -> Any:
     node = data
     for part in str(field_path).split("."):
+        if part == "":
+            continue
         match = re.match(r"^(.+)\[(\d+)\]$", part)
         if match:
             key, index = match.group(1), int(match.group(2))
             if not isinstance(node, dict) or key not in node:
-                return None
+                return _MISSING
             node = node[key]
-            if not isinstance(node, list) or index >= len(node):
-                return None
+            if not isinstance(node, list) or index < 0 or index >= len(node):
+                return _MISSING
             node = node[index]
             continue
-        if not isinstance(node, dict) or part not in node:
-            return None
-        node = node[part]
+        if isinstance(node, dict):
+            if part not in node:
+                return _MISSING
+            node = node[part]
+        elif isinstance(node, list):
+            try:
+                index = int(part)
+            except ValueError:
+                return _MISSING
+            if index < 0 or index >= len(node):
+                return _MISSING
+            node = node[index]
+        else:
+            return _MISSING
     return node
 
 
@@ -402,17 +416,21 @@ class ConnectorExecutor:
         try:
             method = validate_method(endpoint.get("method", "GET"))
             scheme = validate_scheme(endpoint.get("scheme", self.scheme))
-            url = build_request_url(scheme, self.gateway, endpoint.get("path"))
+            port = validate_port(endpoint.get("port"))
+            url = build_request_url(scheme, self.gateway, endpoint.get("path"), port=port)
         except UnsafeProfileRequest as exc:
             raise EndpointError(str(exc)) from exc
         body_format = str(endpoint.get("body_format", "form")).lower()
         if body_format not in BODY_FORMATS:
             raise EndpointError(f"unsupported body format {body_format!r}")
+        verify_tls = endpoint.get("verify_tls", True)
+        if not isinstance(verify_tls, bool):
+            raise EndpointError("verify_tls must be a boolean")
         request_kwargs: Dict[str, Any] = {
             "params": query or None,
             "headers": headers or None,
             "timeout": timeout,
-            "verify": True,
+            "verify": verify_tls,
             "allow_redirects": False,
             "stream": True,
         }
@@ -471,7 +489,11 @@ class ConnectorExecutor:
             if self.endpoints[endpoint_id].get("auth") is not False:
                 continue
             try:
-                observations[endpoint_id] = self.execute_endpoint(endpoint_id).payload
+                result = self.execute_endpoint(endpoint_id)
+                payload = dict(result.payload) if isinstance(result.payload, dict) else {"value": result.payload}
+                if result.text:
+                    payload.setdefault("__text__", result.text)
+                observations[endpoint_id] = payload
             except EndpointError as exc:
                 errors.append(f"{endpoint_id}: {exc}")
         return {"observations": observations, "errors": errors}
@@ -619,7 +641,11 @@ class ConnectorExecutor:
             matches = re.findall(expression, result.text, re.MULTILINE)
             if not matches:
                 return _MISSING
-            return matches if len(matches) > 1 else matches[0]
+            if len(matches) == 1:
+                return matches[0]
+            if all(not isinstance(item, tuple) for item in matches):
+                return matches[0]
+            return matches
         if method in ("xpath", "css"):
             raise ExtractionError(
                 f"extraction method {method!r} is not available in this runtime"
@@ -681,7 +707,88 @@ class ConnectorExecutor:
                 if item and self._conditions_met(rule, item):
                     items.append(item)
             return items
+        if method == "js_constructor_objects":
+            return self._extract_js_constructor_objects(rule, result)
         raise ExtractionError(f"unsupported extraction method {method!r}")
+
+    @staticmethod
+    def _parse_js_ctor_args(text: str) -> List[Any]:
+        args: List[Any] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            while i < n and text[i] in " \t\r\n,":
+                i += 1
+            if i >= n:
+                break
+            ch = text[i]
+            if ch == '"':
+                i += 1
+                buf = []
+                while i < n:
+                    c = text[i]
+                    if c == '\\' and i + 1 < n:
+                        buf.append(c + text[i + 1])
+                        i += 2
+                        continue
+                    if c == '"':
+                        i += 1
+                        break
+                    buf.append(c)
+                    i += 1
+                args.append("".join(buf))
+            elif ch == "'":
+                i += 1
+                buf = []
+                while i < n:
+                    c = text[i]
+                    if c == '\\' and i + 1 < n:
+                        buf.append(c + text[i + 1])
+                        i += 2
+                        continue
+                    if c == "'":
+                        i += 1
+                        break
+                    buf.append(c)
+                    i += 1
+                args.append("".join(buf))
+            elif text.startswith('null', i):
+                args.append(None)
+                i += 4
+            elif text.startswith('true', i):
+                args.append(True)
+                i += 4
+            elif text.startswith('false', i):
+                args.append(False)
+                i += 5
+            else:
+                m = re.match(r'-?\d+(?:\.\d+)?', text[i:])
+                if m:
+                    raw = m.group(0)
+                    args.append(float(raw) if '.' in raw else int(raw))
+                    i += len(raw)
+                else:
+                    # skip unknown token
+                    while i < n and text[i] not in ',)':
+                        i += 1
+        return args
+
+    def _extract_js_constructor_objects(self, rule: Dict[str, Any], result: EndpointResult) -> Any:
+        ctor = str(rule.get("constructor") or rule.get("expression") or "").strip()
+        if not ctor:
+            return _MISSING
+        pattern = re.compile(r'new\s+' + re.escape(ctor) + r'\s*\((.*?)\)\s*(?:,|\)|;)', re.S)
+        fields = rule.get("item_fields") or {}
+        items: List[Dict[str, Any]] = []
+        for match in pattern.finditer(result.text or ""):
+            args = self._parse_js_ctor_args(match.group(1))
+            source = {"args": args, "__index__": len(items)}
+            item = self._item_from_fields(fields, source, rule, index=len(items))
+            if item and self._conditions_met(rule, item):
+                items.append(item)
+        if not items:
+            return _MISSING
+        return items
 
     @staticmethod
     def _transform(name: str, value: Any, options: Dict[str, Any]) -> Any:
@@ -689,6 +796,14 @@ class ConnectorExecutor:
             return str(value).strip()
         if name == "decode_point_encoded_ip":
             return str(value).replace("_point_", ".")
+        if name == "decode_hex_escapes":
+            text = str(value)
+            def _repl(m):
+                try:
+                    return chr(int(m.group(1), 16))
+                except Exception:
+                    return m.group(0)
+            return re.sub(r"\\x([0-9A-Fa-f]{2})", _repl, text)
         if name == "split_before_at":
             return str(value).split("@", 1)[0]
         if name == "integer":
@@ -712,6 +827,14 @@ class ConnectorExecutor:
             mapping = (options.get("voip_status_label") or {}).get("codes") or {}
             default = (options.get("voip_status_label") or {}).get("unknown", "unknown")
             return mapping.get(str(value), default)
+        if name == "scale":
+            if value is None:
+                return None
+            try:
+                factor = float((options.get("scale") or {}).get("factor", 1))
+                return round(float(value) * factor, 6)
+            except (TypeError, ValueError):
+                return None
         if name == "used_percent":
             if not isinstance(value, (list, tuple)) or len(value) < 2:
                 return None

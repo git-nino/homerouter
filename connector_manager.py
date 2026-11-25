@@ -22,7 +22,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from models.enums import Availability, Domain, ValueType
 from models.universal import METRICS
-from profile_safety import UnsafeProfileRequest, validate_endpoint_path, validate_method
+from profile_safety import (
+    UnsafeProfileRequest,
+    validate_endpoint_path,
+    validate_method,
+    validate_port,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -35,6 +40,7 @@ CONNECTOR_ID_RE = re.compile(r"^[a-z0-9]+(?:\.[a-z0-9_-]+)+$")
 EXTRACTION_METHODS = {
     "json_path", "json_path_multi", "regex", "header",
     "literal", "list_length", "list_objects", "keyed_objects",
+    "js_constructor_objects",
 }
 SCHEMES = {"http", "https"}
 BODY_FORMATS = {"form", "json"}
@@ -45,12 +51,14 @@ CREDENTIAL_FIELDS = {
 SUPPORTED_TRANSFORMS = {
     "strip",
     "decode_point_encoded_ip",
+    "decode_hex_escapes",
     "enabled_flag",
     "integer",
     "number",
     "split_before_at",
     "voip_status_label",
     "used_percent",
+    "scale",
 }
 CONDITION_OPERATORS = {"equals", "not_equals", "contains", "prefix", "regex"}
 ID_OPERATORS = {"equals", "not_equals", "contains", "prefix", "regex"}
@@ -906,6 +914,17 @@ class ConnectorManager:
                 issues.append(ValidationIssue(
                     "error", "missing_json_body", f"{path}.body",
                     "a JSON POST endpoint must declare an object body",
+                ))
+            try:
+                validate_port(endpoint.get("port"))
+            except UnsafeProfileRequest as exc:
+                issues.append(ValidationIssue(
+                    "error", "invalid_endpoint_port", f"{path}.port", str(exc)
+                ))
+            if "verify_tls" in endpoint and not isinstance(endpoint.get("verify_tls"), bool):
+                issues.append(ValidationIssue(
+                    "error", "invalid_verify_tls", f"{path}.verify_tls",
+                    "verify_tls must be a boolean when present",
                 ))
         return issues
 

@@ -170,6 +170,38 @@ class FiberHomeAesAuthHandler(BaseAuthHandler):
         self._apply_session()
 
 
+class HuaweiNonceFormAuthHandler(BaseAuthHandler):
+    """Huawei ASP login: fetch token, POST base64 password, expect index redirect."""
+
+    handler_type = "huawei_nonce_form"
+
+    def authenticate(self) -> None:
+        import base64
+
+        token_id = self.executor.flow_endpoint("randcount") or self.executor.flow_endpoint("token")
+        login_id = self.executor.flow_endpoint("login")
+        if not token_id or not login_id:
+            raise AuthenticationError(
+                "Huawei authentication profile is missing randcount or login endpoint."
+            )
+
+        token_result = self.executor.execute_endpoint(token_id)
+        token = (token_result.text or "").strip().lstrip("\ufeff")
+        if not token:
+            raise AuthenticationError("Huawei token response was empty.")
+
+        self.executor.derived["hw_token"] = token
+        self.executor.derived["encoded_password"] = base64.b64encode(
+            str(self.executor.password).encode("utf-8")
+        ).decode("ascii")
+
+        login_result = self.executor.execute_endpoint(login_id)
+        body = login_result.text or ""
+        if "index.asp" not in body:
+            raise AuthenticationError("Gateway rejected the supplied credentials.")
+        self._apply_session()
+
+
 HANDLERS = {
     handler.handler_type: handler
     for handler in (
@@ -180,6 +212,7 @@ HANDLERS = {
         SessionAuthHandler,
         TokenAuthHandler,
         FiberHomeAesAuthHandler,
+        HuaweiNonceFormAuthHandler,
     )
 }
 

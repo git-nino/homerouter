@@ -102,7 +102,11 @@ class ConnectorCatalogTests(unittest.TestCase):
     def test_shipped_catalog_is_structurally_valid(self):
         report = self.manager.validate()
         self.assertTrue(report.structural_valid, [item.to_dict() for item in report.issues])
-        self.assertEqual(report.connector_count, 1)
+        self.assertEqual(report.connector_count, 2)
+        self.assertEqual(
+            sorted(connector["id"] for connector in self.manager.connectors),
+            ["fiberhome.hg6145f1", "huawei.hg8145x6"],
+        )
         self.assertEqual(report.errors, [])
 
     def test_compatibility_is_never_inferred_from_json(self):

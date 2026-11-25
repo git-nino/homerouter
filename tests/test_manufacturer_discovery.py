@@ -471,8 +471,11 @@ class ManufacturerDiscoveryTests(unittest.TestCase):
         self.assertEqual(profile["model"], "HG6145F1")
         self.assertNotIn("firmware", profile)
         self.assertEqual(fiberhome["profiles"], ["fiberhome.hg6145f1"])
+        self.assertEqual(fiberhome["profiles"], ["fiberhome.hg6145f1"])
+        huawei = next(item for item in equipment["manufacturers"] if item["id"] == "huawei")
+        self.assertEqual(huawei["profiles"], ["huawei.hg8145x6"])
         for item in equipment["manufacturers"]:
-            if item["id"] != "fiberhome":
+            if item["id"] not in ("fiberhome", "huawei"):
                 self.assertEqual(item["profiles"], [])
 
     def test_15_cached_success_is_not_reused_after_catalog_becomes_invalid(self):

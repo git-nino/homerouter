@@ -1223,6 +1223,546 @@
         "IPv6 and USB dongle payloads are collected by the legacy path but not yet mapped to universal metrics or collections.",
         "Compatibility must be confirmed against the physical device before this profile replaces hardcoded logic."
       ]
+    },
+    {
+      "id": "huawei.hg8145x6",
+      "display_name": "Huawei HG8145X6-10 (observed)",
+      "status": "observed",
+      "enabled": true,
+      "manufacturer_id": "huawei",
+      "model": "HG8145X6-10",
+      "evidence": {
+        "source": "Observed on a local Huawei HG8145X6-10 web management interface; sensitive values redacted from fixtures.",
+        "verified": true,
+        "notes": [
+          "Authentication uses Huawei ASP token endpoint and login.cgi form POST with base64 password and X_HW_Token.",
+          "Metrics are extracted from authenticated ASP/HTML pages using read-only GET requests.",
+          "Status remains 'observed'; physical-device compatibility requires normalized comparison on the device."
+        ]
+      },
+      "identification": {
+        "confidence": "partial",
+        "rules": [
+          {
+            "id": "preauth-title-or-model",
+            "phase": "pre_auth",
+            "source": "root",
+            "field": "__text__",
+            "operator": "contains",
+            "value": "HG8145X6",
+            "confidence": "partial",
+            "weight": 60,
+            "evidence": "Root page contains the device model string on observed Huawei firmware."
+          }
+        ]
+      },
+      "auth": {
+        "credential_suggestion_key": "generic_user_supplied",
+        "flows": [
+          {
+            "id": "huawei-nonce-login",
+            "type": "huawei_nonce_form",
+            "order": 1,
+            "endpoints": {
+              "login": "login",
+              "randcount": "rand"
+            },
+            "success": {
+              "field": "__text__"
+            },
+            "session": {
+              "store": false
+            }
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "root",
+          "method": "GET",
+          "path": "/",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 8,
+          "auth": false,
+          "description": "Pre-auth root page used for identification."
+        },
+        {
+          "id": "rand",
+          "method": "POST",
+          "path": "/asp/GetRandCount.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "text",
+          "timeout_seconds": 8,
+          "auth": false,
+          "description": "Returns X_HW_Token for login."
+        },
+        {
+          "id": "login",
+          "method": "POST",
+          "path": "/login.cgi",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "body_format": "form",
+          "timeout_seconds": 10,
+          "auth": false,
+          "body": {
+            "UserName": {
+              "source": "user_input",
+              "field": "username"
+            },
+            "PassWord": {
+              "source": "derived",
+              "field": "encoded_password"
+            },
+            "Language": {
+              "source": "literal",
+              "value": "english"
+            },
+            "x.X_HW_Token": {
+              "source": "derived",
+              "field": "hw_token"
+            }
+          },
+          "description": "Huawei login form; success response redirects to index.asp."
+        },
+        {
+          "id": "deviceinfo",
+          "method": "GET",
+          "path": "/html/ssmp/deviceinfo/deviceinfo.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 10,
+          "auth": true,
+          "description": "Device identity and uptime."
+        },
+        {
+          "id": "opticinfo",
+          "method": "GET",
+          "path": "/html/amp/opticinfo/opticinfo.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 10,
+          "auth": true,
+          "description": "Optical/PON information."
+        },
+        {
+          "id": "lan_devices",
+          "method": "GET",
+          "path": "/html/bbsp/common/GetLanUserDevInfo.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 10,
+          "auth": true,
+          "description": "LAN user devices."
+        },
+        {
+          "id": "voipinfo",
+          "method": "GET",
+          "path": "/html/voip/status/sipvoipmaintain.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 10,
+          "auth": true,
+          "description": "VoIP/SIP status page."
+        },
+        {
+          "id": "wlaninfo",
+          "method": "GET",
+          "path": "/html/amp/wlaninfo/wlaninfo.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 10,
+          "auth": true,
+          "description": "WLAN info page with SSID/radio configuration."
+        }
+      ],
+      "extraction": [
+        {
+          "id": "identity-manufacturer-literal",
+          "metric": "device.manufacturer",
+          "endpoint": "deviceinfo",
+          "method": "literal",
+          "expression": "Huawei",
+          "priority": 10,
+          "transforms": [
+            "strip"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "identity-model",
+          "metric": "device.model",
+          "endpoint": "deviceinfo",
+          "method": "regex",
+          "expression": "new stDeviceInfo\\([^,]+,[^,]+,[^,]+,[^,]+,\\\"([^\\\"]+)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "identity-firmware",
+          "metric": "device.firmware",
+          "endpoint": "deviceinfo",
+          "method": "regex",
+          "expression": "new stDeviceInfo\\([^,]+,[^,]+,[^,]+,\\\"([^\\\"]+)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unsupported"
+        },
+        {
+          "id": "identity-hardware",
+          "metric": "device.hardware",
+          "endpoint": "deviceinfo",
+          "method": "regex",
+          "expression": "new stDeviceInfo\\([^,]+,[^,]+,\\\"([^\\\"]+)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unsupported"
+        },
+        {
+          "id": "identity-serial",
+          "metric": "device.serial",
+          "endpoint": "deviceinfo",
+          "method": "regex",
+          "expression": "new stDeviceInfo\\([^,]+,\\\"([^\\\"]+)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unsupported"
+        },
+        {
+          "id": "identity-gpon-sn",
+          "metric": "device.gpon_sn",
+          "endpoint": "deviceinfo",
+          "method": "regex",
+          "expression": "new stDeviceInfo\\([^,]+,\\\"([^\\\"]+)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unsupported"
+        },
+        {
+          "id": "system-uptime",
+          "metric": "system.uptime_s",
+          "endpoint": "deviceinfo",
+          "method": "regex",
+          "expression": "dev_uptime\\s*=\\s*'([0-9]+)'",
+          "transforms": [
+            "integer"
+          ],
+          "value_type": "duration_seconds",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "optical-tx",
+          "metric": "optical.tx_power_dbm",
+          "endpoint": "opticinfo",
+          "method": "regex",
+          "expression": "new stOpticInfo\\([^,]+,[^,]+,\\\"([^\\\"]*)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip",
+            "number"
+          ],
+          "value_type": "dbm",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "optical-rx",
+          "metric": "optical.rx_power_dbm",
+          "endpoint": "opticinfo",
+          "method": "regex",
+          "expression": "new stOpticInfo\\([^,]+,[^,]+,[^,]+,\\\"([^\\\"]*)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip",
+            "number"
+          ],
+          "value_type": "dbm",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "optical-voltage",
+          "metric": "optical.supply_voltage_v",
+          "endpoint": "opticinfo",
+          "method": "regex",
+          "expression": "new stOpticInfo\\([^,]+,[^,]+,[^,]+,[^,]+,\\\"([^\\\"]*)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip",
+            "number",
+            "scale"
+          ],
+          "value_type": "volt",
+          "availability_on_missing": "unavailable",
+          "transform_options": {
+            "scale": {
+              "factor": 0.001
+            }
+          }
+        },
+        {
+          "id": "optical-temp",
+          "metric": "optical.temperature_c",
+          "endpoint": "opticinfo",
+          "method": "regex",
+          "expression": "new stOpticInfo\\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\\\"([^\\\"]*)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip",
+            "number"
+          ],
+          "value_type": "celsius",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "optical-bias",
+          "metric": "optical.bias_current_ma",
+          "endpoint": "opticinfo",
+          "method": "regex",
+          "expression": "new stOpticInfo\\([^,]+,[^,]+,[^,]+,[^,]+,[^,]+,[^,]+,\\\"([^\\\"]*)\\\"",
+          "transforms": [
+            "decode_hex_escapes",
+            "strip",
+            "number"
+          ],
+          "value_type": "milliamp",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "lan-devices",
+          "collection": "devices",
+          "endpoint": "lan_devices",
+          "method": "js_constructor_objects",
+          "constructor": "USERDevice",
+          "item_fields": {
+            "id": {
+              "target": "id",
+              "field": "args[2]",
+              "transforms": [
+                "strip",
+                "decode_hex_escapes"
+              ]
+            },
+            "hostname": {
+              "target": "hostname",
+              "field": "args[9]",
+              "transforms": [
+                "strip",
+                "decode_hex_escapes"
+              ]
+            },
+            "ip_address": {
+              "target": "ip_address",
+              "field": "args[1]",
+              "transforms": [
+                "strip"
+              ]
+            },
+            "mac_address": {
+              "target": "mac_address",
+              "field": "args[2]",
+              "transforms": [
+                "strip",
+                "decode_hex_escapes"
+              ]
+            },
+            "link_type": {
+              "target": "link_type",
+              "field": "args[7]",
+              "transforms": [
+                "strip"
+              ]
+            },
+            "address_source": {
+              "target": "address_source",
+              "field": "args[4]",
+              "transforms": [
+                "strip"
+              ]
+            },
+            "status": {
+              "target": "status",
+              "field": "args[6]",
+              "transforms": [
+                "strip"
+              ]
+            }
+          },
+          "availability_on_missing": "unavailable",
+          "expression": "USERDevice"
+        },
+        {
+          "id": "ssids",
+          "collection": "ssids",
+          "endpoint": "wlaninfo",
+          "method": "js_constructor_objects",
+          "constructor": "stWlan",
+          "item_fields": {
+            "name": {
+              "target": "name",
+              "field": "args[3]",
+              "transforms": [
+                "strip",
+                "decode_hex_escapes"
+              ]
+            },
+            "active": {
+              "target": "active",
+              "field": "args[1]",
+              "transforms": [
+                "strip",
+                "enabled_flag"
+              ],
+              "transform_options": {
+                "enabled_flag": {
+                  "values": {
+                    "1": true,
+                    "0": false
+                  },
+                  "default": false
+                }
+              }
+            }
+          },
+          "availability_on_missing": "unsupported",
+          "expression": "stWlan"
+        },
+        {
+          "id": "voip-reg-state",
+          "metric": "voip.registration_state",
+          "endpoint": "voipinfo",
+          "method": "regex",
+          "expression": "new stLine\\([^,]*,[^,]*,[^,]*,[^,]*,[^,]*,\"([^\"]*)\"",
+          "transforms": [
+            "strip",
+            "decode_hex_escapes"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "optical-reg",
+          "metric": "optical.registration_state",
+          "endpoint": "opticinfo",
+          "method": "regex",
+          "expression": "new stOpticInfo\\([^,]*,\"([^\"]*)\"",
+          "transforms": [
+            "strip",
+            "decode_hex_escapes"
+          ],
+          "value_type": "string",
+          "availability_on_missing": "unavailable"
+        }
+      ],
+      "validation": [
+        {
+          "metric": "device.model",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "device.firmware",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "device.serial",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "device.gpon_sn",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "system.uptime_s",
+          "rule": "duration_seconds",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "optical.tx_power_dbm",
+          "rule": "dbm_range",
+          "options": {
+            "min": -40,
+            "max": 10
+          },
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "optical.rx_power_dbm",
+          "rule": "dbm_range",
+          "options": {
+            "min": -40,
+            "max": 10
+          },
+          "on_failure": "invalid"
+        }
+      ],
+      "dependencies": {
+        "login": [
+          "rand"
+        ],
+        "deviceinfo": [
+          "login"
+        ],
+        "opticinfo": [
+          "login"
+        ],
+        "lan_devices": [
+          "login"
+        ],
+        "voipinfo": [
+          "login"
+        ],
+        "wlaninfo": [
+          "login"
+        ]
+      },
+      "capabilities": [
+        "device_identity",
+        "optical",
+        "system",
+        "connected_devices",
+        "voip"
+      ],
+      "limitations": [
+        "WAN metrics are unavailable: captured Huawei WAN pages did not expose populated connection objects; requires sanitized populated WAN capture for declarative mapping.",
+        "VoIP phone number is unavailable: observed stLine exposes status/call state/register error only; no reliable phone number or SIP secrets are extracted.",
+        "Wi-Fi is mapped only as SSID collection consumed by dashboard (name/active); passwords/PSKs/secrets are never extracted."
+      ]
     }
   ]
 }

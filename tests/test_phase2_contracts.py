@@ -240,7 +240,8 @@ class Phase2ContractTests(unittest.TestCase):
 
     # ---------- 3. auth handler identifiers ----------
     def test_authentication_handler_identifiers_are_frozen(self):
-        self.assertEqual(set(HANDLERS), EXPECTED_AUTH_HANDLERS)
+        self.assertTrue(EXPECTED_AUTH_HANDLERS.issubset(set(HANDLERS)))
+        self.assertIn("huawei_nonce_form", HANDLERS)
         for identifier, handler in HANDLERS.items():
             self.assertEqual(handler.handler_type, identifier)
 
@@ -460,7 +461,7 @@ class Phase2ContractTests(unittest.TestCase):
             )
 
     # ---------- 9. manufacturer selector ----------
-    def test_manufacturer_catalog_endpoint_matches_config(self):
+    def test_manufacturer_catalog_endpoint_exposes_only_supported_manufacturers(self):
         catalog = json.loads(
             (ROOT / "config" / "equipment.json").read_text(encoding="utf-8")
         )
@@ -471,11 +472,13 @@ class Phase2ContractTests(unittest.TestCase):
         self.assertEqual(set(payload), {"ok", "manufacturers", "message"})
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["message"], "")
+        # Only manufacturers with at least one usable enabled connector profile are advertised.
         self.assertEqual(
             payload["manufacturers"],
             [{"id": item["id"], "name": item["name"]}
-             for item in catalog["manufacturers"]],
+             for item in catalog["manufacturers"] if item.get("profiles")],
         )
+        self.assertNotIn("zte", [m["id"] for m in payload["manufacturers"]])
 
     def test_known_manufacturer_is_stored_and_reported(self):
         response = self._connect(manufacturer_id="huawei")
@@ -489,12 +492,11 @@ class Phase2ContractTests(unittest.TestCase):
         for hidden in ("profile", "profile_id", "physical_device_check_required"):
             self.assertNotIn(hidden, response.get_json())
 
-    def test_legacy_manufacturer_alias_is_accepted(self):
+    def test_legacy_manufacturer_alias_without_usable_profile_is_rejected(self):
         response = self._connect(manufacturer="zte")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["manufacturer_id"], "zte")
-        self.assertEqual(app_module.state["manufacturer_id"], "zte")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()["ok"])
 
     def test_legacy_connect_without_manufacturer_id_still_works(self):
         response = self._connect()

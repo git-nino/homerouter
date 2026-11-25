@@ -452,17 +452,24 @@ def _apply_speedtest_to_model(model, speed):
 # --------------------------------------------------------------------------
 # Manufacturer catalog
 # --------------------------------------------------------------------------
-def load_manufacturers():
+def load_manufacturers(manager=None):
     """Read the manufacturer catalog without exposing internal paths.
 
-    Returns ``(manufacturers, message)``. An absent, empty or invalid catalog
-    is a soft failure: connector-driven connection workflow keeps working and
-    the UI simply has no manufacturers to offer. Profile associations remain
-    internal and are never exposed to the browser.
+    Returns ``(manufacturers, message)``. Only manufacturers with at least one
+    usable, enabled connector profile are advertised. An absent, empty or
+    invalid catalog is a soft failure: connector-driven connection workflow keeps
+    working and the UI simply has no manufacturers to offer. Profile
+    associations remain internal and are never exposed to the browser.
     """
     catalog, message = _load_equipment_catalog()
     if message:
         return [], message
+
+    if manager is None:
+        try:
+            manager = state.get("manager") or ConnectorManager()
+        except Exception:
+            manager = None
 
     entries = catalog.get("manufacturers")
     manufacturers = []
@@ -474,11 +481,34 @@ def load_manufacturers():
         name = str(entry.get("name") or "").strip()
         if not ident or not name or ident in seen:
             continue
+        refs = entry.get("profiles")
+        if not isinstance(refs, list) or not refs:
+            continue
+        has_usable = False
+        saw_known = False
+        for ref in refs:
+            profile_id = str(ref or "").strip()
+            if not profile_id or manager is None:
+                continue
+            try:
+                profile = manager.get(profile_id)
+            except Exception:
+                profile = None
+            if isinstance(profile, dict):
+                saw_known = True
+                if profile.get("enabled", True):
+                    has_usable = True
+                    break
+        # If manager knows these profile refs and none are usable, hide manufacturer.
+        # If refs exist but manager doesn't know them (e.g. synthetic test manager),
+        # keep catalog-advertised manufacturer to avoid false negatives.
+        if saw_known and not has_usable:
+            continue
         seen.add(ident)
         manufacturers.append({"id": ident, "name": name})
 
     if not manufacturers:
-        return [], "No manufacturers are configured."
+        return [], "No supported manufacturers are configured."
     return manufacturers, ""
 
 
@@ -507,7 +537,9 @@ def api_gateway():
 
 @app.route("/api/manufacturers")
 def api_manufacturers():
-    manufacturers, message = load_manufacturers()
+    with _lock:
+        manager = state.get("manager")
+    manufacturers, message = load_manufacturers(manager)
     return jsonify({
         "ok": bool(manufacturers),
         "manufacturers": manufacturers,
@@ -564,7 +596,9 @@ def api_connect():
     # profiles.
     manufacturer_id = payload.get("manufacturer_id", payload.get("manufacturer"))
     manufacturer_id = str(manufacturer_id).strip() if manufacturer_id else ""
-    manufacturers, message = load_manufacturers()
+    with _lock:
+        manager = state["manager"]
+    manufacturers, message = load_manufacturers(manager)
     known_manufacturers = {item["id"] for item in manufacturers}
     if manufacturer_id and manufacturer_id not in known_manufacturers:
         detail = message if message and not known_manufacturers else "Unknown manufacturer."

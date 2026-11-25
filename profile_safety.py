@@ -15,6 +15,7 @@ SAFE_METHODS = frozenset({"GET", "POST"})
 SAFE_SCHEMES = frozenset({"http", "https"})
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_ENDPOINT_PATH_LENGTH = 2048
+MAX_PORT = 65535
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
 _PATH_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@/-]*$")
@@ -120,14 +121,29 @@ def normalize_gateway(gateway: Any) -> str:
     return text
 
 
-def build_request_url(scheme: Any, gateway: Any, path: Any) -> str:
+def validate_port(port: Any) -> Optional[int]:
+    """Return a validated optional TCP port."""
+
+    if port is None or port == "":
+        return None
+    if isinstance(port, bool):
+        raise UnsafeProfileRequest("port must be an integer between 1 and 65535")
+    try:
+        value = int(port)
+    except (TypeError, ValueError) as exc:
+        raise UnsafeProfileRequest("port must be an integer between 1 and 65535") from exc
+    if str(port).strip() != str(value) or value < 1 or value > MAX_PORT:
+        raise UnsafeProfileRequest("port must be an integer between 1 and 65535")
+    return value
+
+
+def build_request_url(scheme: Any, gateway: Any, path: Any, port: Any = None) -> str:
     """Build a gateway-pinned URL from validated profile components."""
 
-    return (
-        f"{validate_scheme(scheme)}://"
-        f"{normalize_gateway(gateway)}"
-        f"{validate_endpoint_path(path)}"
-    )
+    host = normalize_gateway(gateway)
+    port_value = validate_port(port)
+    netloc = f"{host}:{port_value}" if port_value is not None else host
+    return f"{validate_scheme(scheme)}://{netloc}{validate_endpoint_path(path)}"
 
 
 def is_redirect(status_code: Any) -> bool:

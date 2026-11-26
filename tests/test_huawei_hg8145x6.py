@@ -58,7 +58,8 @@ class FakeSession:
 
     def request(self, method, url, **kwargs):
         self.record.append({"method": method, "url": url, **kwargs})
-        for key, handler in self.routes.items():
+        # Match most-specific route first so "/" doesn't shadow real endpoints.
+        for key, handler in sorted(self.routes.items(), key=lambda kv: len(kv[0]), reverse=True):
             if key in url:
                 value = handler(method, url, kwargs) if callable(handler) else handler
                 if isinstance(value, FakeResponse):
@@ -85,6 +86,7 @@ def _success_routes(record=None, login_text=None):
         "/html/ssmp/deviceinfo/deviceinfo.asp": FakeResponse(_load("deviceinfo.asp")),
         "/html/amp/opticinfo/opticinfo.asp": FakeResponse(_load("opticinfo.asp")),
         "/html/bbsp/common/GetLanUserDevInfo.asp": FakeResponse(_load("lan_user_dev.asp")),
+        "/html/bbsp/common/getwanlist.asp": FakeResponse(_load("wan_list.asp")),
         "/html/bbsp/waninfo/waninfo.asp": FakeResponse(_load("waninfo.asp")),
         "/html/voip/status/sipvoipmaintain.asp": FakeResponse(_load("sipvoipmaintain.asp")),
         "/html/amp/wlaninfo/wlaninfo.asp": FakeResponse(_load("wlaninfo.asp")),
@@ -127,13 +129,14 @@ class HuaweiProfileValidationTests(unittest.TestCase):
         dumped = json.dumps(self.connector)
         self.assertNotIn("SYNTHETIC_TEST_PW", dumped)
 
-    def test_credential_suggestion_is_generic(self):
+    def test_credential_suggestion_is_huawei_default(self):
         key = self.connector["auth"]["credential_suggestion_key"]
-        self.assertEqual(key, "generic_user_supplied")
+        self.assertEqual(key, "huawei_hg8145x6_defaults")
         suggestion = self.manager.credential_suggestion(key)
         self.assertIsNotNone(suggestion)
-        self.assertEqual(suggestion.get("default_username", ""), "")
+        self.assertEqual(suggestion.get("default_username", ""), "root")
         self.assertEqual(suggestion.get("default_password", ""), "")
+        self.assertEqual(suggestion.get("default_gateway", ""), "192.168.100.1")
 
 
 class HuaweiAuthTests(unittest.TestCase):
@@ -277,17 +280,37 @@ class HuaweiExtractionTests(unittest.TestCase):
 
     def test_voip_mapping(self):
         v = self.model.domains[Domain.VOIP]
-        self.assertIn("ERROR_WAN_NOT_CONFIGURED", str(v["voip.registration_state"].value))
-        # phone number is unavailable/not fabricated
+        self.assertEqual(v["voip.registration_state"].availability, Availability.AVAILABLE)
+        self.assertEqual(v["voip.registration_state"].value, "Disabled")
+        self.assertEqual(v["voip.line_status"].availability, Availability.AVAILABLE)
+        self.assertEqual(v["voip.line_status"].value, "Idle")
+        # Empty directory number must not be fabricated as a phone number.
         phone = v["voip.phone_number"]
-        self.assertIn(phone.availability, (Availability.UNAVAILABLE, Availability.UNSUPPORTED, Availability.NOT_LOADED, Availability.ERROR))
+        self.assertIn(phone.availability, (Availability.UNAVAILABLE, Availability.UNSUPPORTED, Availability.NOT_LOADED, Availability.ERROR, Availability.INVALID))
         self.assertIsNone(phone.value)
 
-    def test_wan_unavailable_not_fabricated(self):
+    def test_wan_mapping_from_ppp_internet_row(self):
         w = self.model.domains[Domain.WAN]
-        for k, m in w.items():
-            self.assertIn(m.availability, (Availability.UNAVAILABLE, Availability.UNSUPPORTED, Availability.NOT_LOADED, Availability.ERROR), k)
-            self.assertIsNone(m.value, k)
+        self.assertEqual(w["wan.public_ip"].availability, Availability.AVAILABLE)
+        self.assertEqual(w["wan.public_ip"].value, "203.0.113.10")
+        self.assertEqual(w["wan.gateway_ip"].value, "203.0.113.1")
+        self.assertEqual(w["wan.connection_name"].value, "INTERNET_R_0_12_35")
+        self.assertEqual(w["wan.status"].value, "Connected")
+        self.assertEqual(w["wan.connection_type"].value, "IP_Routed")
+        self.assertEqual(w["wan.dns_servers"].value, "198.51.100.1,198.51.100.2")
+        self.assertEqual(w["wan.vlan_id"].value, "12")
+        self.assertEqual(w["wan.mac"].value, "AA:BB:CC:DD:EE:01")
+        self.assertEqual(w["wan.mtu"].value, 1492)
+        self.assertEqual(w["wan.nat"].value, "Enabled")
+        self.assertEqual(w["wan.uptime_s"].value, 3600)
+        self.assertEqual(w["wan.pppoe_user"].value, "user@example.invalid")
+        self.assertEqual(w["wan.last_error"].value, "ERROR_NONE")
+
+    def test_wan_selects_internet_ppp_not_voip(self):
+        # fixture has VOIP PPP row too; ensure INTERNET row selected
+        w = self.model.domains[Domain.WAN]
+        self.assertEqual(w["wan.public_ip"].value, "203.0.113.10")
+        self.assertNotEqual(w["wan.pppoe_user"].value, "voip@example.invalid")
 
     def test_optical_voltage_normalized_to_volts(self):
         o = self.model.domains[Domain.OPTICAL]
@@ -330,6 +353,74 @@ class HuaweiIdentificationTests(unittest.TestCase):
         )
         discovery = ex.discover()
         self.assertIn("observations", discovery)
+
+
+class HuaweiLoginDefaultsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import app as app_module
+        cls.app_module = app_module
+        app_module.app.config["TESTING"] = True
+        cls.client = app_module.app.test_client()
+        cls.manager, _ = _huawei_connector()
+
+    def setUp(self):
+        from unittest.mock import patch
+        self._patchers = []
+        # Keep discovery deterministic and side-effect free.
+        def fake_discover(**kwargs):
+            return {
+                "gateway": "192.168.1.1",
+                "gateway_detected": True,
+                "detected": True,
+                "selected_profile": "huawei.hg8145x6" if kwargs.get("manufacturer_id") == "huawei" else "fiberhome.hg6145f1",
+            }
+        p = patch.object(self.app_module, "run_discovery", side_effect=lambda force=False, host=None, manufacturer_id=None: {
+            "gateway": "198.51.100.220" if manufacturer_id == "huawei" else "192.168.1.1",
+            "gateway_detected": True,
+            "detected": True,
+            "selected_profile": "huawei.hg8145x6" if manufacturer_id == "huawei" else "fiberhome.hg6145f1",
+        })
+        p.start(); self._patchers.append(p)
+        p2 = patch.dict(self.app_module.state, {"manager": self.manager})
+        p2.start(); self._patchers.append(p2)
+
+    def tearDown(self):
+        for p in reversed(self._patchers):
+            p.stop()
+
+    def test_huawei_defaults_prefilled(self):
+        payload = self.client.get('/api/login-defaults?manufacturer_id=huawei').get_json()
+        self.assertEqual(payload['gateway'], '192.168.100.1')
+        self.assertEqual(payload['username'], 'root')
+        self.assertEqual(payload['password'], '')
+
+    def test_fiberhome_defaults_preserved(self):
+        payload = self.client.get('/api/login-defaults?manufacturer_id=fiberhome').get_json()
+        self.assertEqual(payload['gateway'], '192.168.1.1')
+        self.assertEqual(payload['username'], 'user')
+        self.assertEqual(payload['password'], 'user1234')
+
+    def test_user_supplied_values_passed_to_connect(self):
+        from unittest.mock import patch, MagicMock
+        fake_model = MagicMock()
+        fake_model.to_dict.return_value = {
+            'gateway': '198.51.100.220', 'domains': {}, 'devices': [], 'devices_loaded': False,
+            'collections': {}, 'voip_lines': [], 'endpoint_errors': [], 'updated_at': None,
+            'profile_id': 'huawei.hg8145x6', 'compatibility': {},
+        }
+        with patch.object(self.app_module, 'run_discovery', return_value={'selected_profile':'huawei.hg8145x6','detected':True,'gateway_detected':True}), \
+             patch('app.ConnectorExecutor') as C:
+            inst = C.return_value
+            inst.connect.return_value = None
+            inst.collect.return_value = fake_model
+            resp = self.client.post('/api/connect', json={'gateway':'198.51.100.220','username':'root','password':'secret','manufacturer_id':'huawei'})
+            self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+            args, kwargs = C.call_args
+            self.assertEqual(args[1], '198.51.100.220')
+            creds = kwargs.get('credentials') or (args[2] if len(args) > 2 else {})
+            self.assertEqual(creds.get('username'), 'root')
+            self.assertEqual(creds.get('password'), 'secret')
 
 
 class HuaweiSessionLifecycleTests(unittest.TestCase):

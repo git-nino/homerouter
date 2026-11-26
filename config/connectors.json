@@ -1257,7 +1257,7 @@
         ]
       },
       "auth": {
-        "credential_suggestion_key": "generic_user_supplied",
+        "credential_suggestion_key": "huawei_hg8145x6_defaults",
         "flows": [
           {
             "id": "huawei-nonce-login",
@@ -1391,6 +1391,18 @@
           "timeout_seconds": 10,
           "auth": true,
           "description": "WLAN info page with SSID/radio configuration."
+        },
+        {
+          "id": "wan_list",
+          "method": "GET",
+          "path": "/html/bbsp/common/getwanlist.asp",
+          "scheme": "https",
+          "port": 80,
+          "verify_tls": false,
+          "format": "html",
+          "timeout_seconds": 10,
+          "auth": true,
+          "description": "WAN connection list (IP/PPP)."
         }
       ],
       "extraction": [
@@ -1625,7 +1637,8 @@
             }
           },
           "availability_on_missing": "unavailable",
-          "expression": "USERDevice"
+          "expression": "USERDevice",
+          "dedupe_items": true
         },
         {
           "id": "ssids",
@@ -1664,19 +1677,6 @@
           "expression": "stWlan"
         },
         {
-          "id": "voip-reg-state",
-          "metric": "voip.registration_state",
-          "endpoint": "voipinfo",
-          "method": "regex",
-          "expression": "new stLine\\([^,]*,[^,]*,[^,]*,[^,]*,[^,]*,\"([^\"]*)\"",
-          "transforms": [
-            "strip",
-            "decode_hex_escapes"
-          ],
-          "value_type": "string",
-          "availability_on_missing": "unavailable"
-        },
-        {
           "id": "optical-reg",
           "metric": "optical.registration_state",
           "endpoint": "opticinfo",
@@ -1688,6 +1688,404 @@
           ],
           "value_type": "string",
           "availability_on_missing": "unavailable"
+        },
+        {
+          "id": "wan-public-ip-ppp",
+          "metric": "wan.public_ip",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[14]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-connection-name-ppp",
+          "metric": "wan.connection_name",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[8]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-status-ppp",
+          "metric": "wan.status",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[12]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-conn-type-ppp",
+          "metric": "wan.connection_type",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[13]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-gateway-ppp",
+          "metric": "wan.gateway_ip",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[15]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-dns-ppp",
+          "metric": "wan.dns_servers",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[18]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-vlan-ppp",
+          "metric": "wan.vlan_id",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[23]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-mac-ppp",
+          "metric": "wan.mac",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[4]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-mtu-ppp",
+          "metric": "wan.mtu",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[37]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip",
+            "integer"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-nat-ppp",
+          "metric": "wan.nat",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[16]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip",
+            "enabled_flag"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ],
+          "transform_options": {
+            "enabled_flag": {
+              "values": {
+                "1": "Enabled",
+                "0": "Disabled"
+              },
+              "default": "Disabled"
+            }
+          }
+        },
+        {
+          "id": "wan-uptime-ppp",
+          "metric": "wan.uptime_s",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[40]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip",
+            "integer"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-pppoe-user-ppp",
+          "metric": "wan.pppoe_user",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[19]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[5]",
+              "value": "Connected",
+              "operator": "eq"
+            },
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "wan-last-error-ppp",
+          "metric": "wan.last_error",
+          "endpoint": "wan_list",
+          "method": "js_constructor_objects",
+          "constructor": "WanPPP",
+          "source_field": "args[6]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10,
+          "when_all": [
+            {
+              "field": "args[27]",
+              "value": "INTERNET",
+              "operator": "contains"
+            }
+          ]
+        },
+        {
+          "id": "voip-reg-state-line",
+          "metric": "voip.registration_state",
+          "endpoint": "voipinfo",
+          "method": "js_constructor_objects",
+          "constructor": "stLine",
+          "source_field": "args[3]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10
+        },
+        {
+          "id": "voip-line-status-line",
+          "metric": "voip.line_status",
+          "endpoint": "voipinfo",
+          "method": "js_constructor_objects",
+          "constructor": "stLine",
+          "source_field": "args[4]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10
+        },
+        {
+          "id": "voip-phone-line",
+          "metric": "voip.phone_number",
+          "endpoint": "voipinfo",
+          "method": "js_constructor_objects",
+          "constructor": "stLine",
+          "source_field": "args[1]",
+          "transforms": [
+            "first",
+            "decode_hex_escapes",
+            "strip"
+          ],
+          "availability_on_missing": "unavailable",
+          "priority": 10
         }
       ],
       "validation": [
@@ -1733,6 +2131,36 @@
             "max": 10
           },
           "on_failure": "invalid"
+        },
+        {
+          "metric": "wan.public_ip",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "wan.gateway_ip",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "wan.mac",
+          "rule": "non_empty",
+          "on_failure": "invalid"
+        },
+        {
+          "metric": "voip.phone_number",
+          "rule": "non_empty",
+          "on_failure": "unavailable"
+        },
+        {
+          "metric": "voip.registration_state",
+          "rule": "non_empty",
+          "on_failure": "unavailable"
+        },
+        {
+          "metric": "voip.line_status",
+          "rule": "non_empty",
+          "on_failure": "unavailable"
         }
       ],
       "dependencies": {
@@ -1753,6 +2181,9 @@
         ],
         "wlaninfo": [
           "login"
+        ],
+        "wan_list": [
+          "login"
         ]
       },
       "capabilities": [
@@ -1760,10 +2191,11 @@
         "optical",
         "system",
         "connected_devices",
-        "voip"
+        "voip",
+        "wan"
       ],
       "limitations": [
-        "WAN metrics are unavailable: captured Huawei WAN pages did not expose populated connection objects; requires sanitized populated WAN capture for declarative mapping.",
+        "WAN metrics are mapped from authenticated getwanlist.asp PPP/IP constructor rows; only fields present in the active Internet row are exposed.",
         "VoIP phone number is unavailable: observed stLine exposes status/call state/register error only; no reliable phone number or SIP secrets are extracted.",
         "Wi-Fi is mapped only as SSID collection consumed by dashboard (name/active); passwords/PSKs/secrets are never extracted."
       ]

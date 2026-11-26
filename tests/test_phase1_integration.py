@@ -173,7 +173,7 @@ class Phase1DashboardTests(unittest.TestCase):
         self.assertEqual(
             payload["manufacturers"],
             [{"id": item["id"], "name": item["name"]}
-             for item in catalog["manufacturers"] if item.get("profiles")],
+             for item in catalog["manufacturers"]],
         )
         self.assertEqual(payload["message"], "")
 
@@ -197,14 +197,14 @@ class Phase1DashboardTests(unittest.TestCase):
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["manufacturers"], [])
 
-    def test_placeholder_manufacturer_without_usable_profile_not_advertised(self):
+    def test_placeholder_manufacturer_without_usable_profile_is_advertised(self):
         catalog = json.loads((ROOT / "config" / "equipment.json").read_text(encoding="utf-8"))
         zte = [m for m in catalog.get("manufacturers", []) if m.get("id") == "zte"]
         self.assertTrue(zte, "ZTE placeholder expected in equipment catalog")
         self.assertEqual(zte[0].get("profiles"), [])
         payload = self.client.get("/api/manufacturers").get_json()
         ids = [m["id"] for m in payload.get("manufacturers", [])]
-        self.assertNotIn("zte", ids)
+        self.assertIn("zte", ids)
         self.assertIn("fiberhome", ids)
         self.assertIn("huawei", ids)
 
@@ -232,6 +232,7 @@ class Phase1DashboardTests(unittest.TestCase):
         response = self._connect(extra={"manufacturer": "zte"})
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.get_json()["ok"])
+        self.assertIn("not yet supported", response.get_json().get("message", "").lower())
 
     def test_unknown_manufacturer_is_rejected(self):
         response = self._connect(manufacturer_id="not-in-catalog")
@@ -369,8 +370,8 @@ class Phase1DashboardTests(unittest.TestCase):
             response.close()
 
     def test_service_worker_is_v9_with_preserved_shell(self):
-        self.assertIn("const CACHE = 'gwmon-v9';", self.worker)
-        self.assertNotIn("const CACHE = 'gwmon-v8';", self.worker)
+        self.assertIn("const CACHE = 'gwmon-v11';", self.worker)
+        self.assertNotIn("const CACHE = 'gwmon-v10';", self.worker)
         for resource in (
             "/", "/static/style.css", "/static/app.js",
             "/static/manifest.webmanifest", "/static/favicon.png",

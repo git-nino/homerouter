@@ -472,16 +472,35 @@ class Phase2ContractTests(unittest.TestCase):
         self.assertEqual(set(payload), {"ok", "manufacturers", "message"})
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["message"], "")
-        # Only manufacturers with at least one usable enabled connector profile are advertised.
+        # Catalog-advertised manufacturers are exposed; unsupported ones remain selectable.
         self.assertEqual(
             payload["manufacturers"],
             [{"id": item["id"], "name": item["name"]}
-             for item in catalog["manufacturers"] if item.get("profiles")],
+             for item in catalog["manufacturers"]],
         )
-        self.assertNotIn("zte", [m["id"] for m in payload["manufacturers"]])
+        self.assertIn("zte", [m["id"] for m in payload["manufacturers"]])
 
     def test_known_manufacturer_is_stored_and_reported(self):
-        response = self._connect(manufacturer_id="huawei")
+        discovery = {
+            "gateway": "192.168.1.1",
+            "gateway_detected": True,
+            "detected": True,
+            "detected_device": "HG8145X6-10",
+            "selected_profile": "huawei.hg8145x6",
+        }
+        class RecordingExecutor:
+            def __init__(self, profile, host, credentials, manager=None, session=None):
+                self.profile = profile
+            def connect(self):
+                return {}
+        with patch.object(app_module, "run_discovery", return_value=discovery), \
+             patch.object(app_module, "ConnectorExecutor", RecordingExecutor):
+            response = self.client.post("/api/connect", json={
+                "gateway": "192.168.1.1",
+                "username": "tester",
+                "password": "unit-test-password",
+                "manufacturer_id": "huawei",
+            })
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["manufacturer_id"], "huawei")
@@ -497,6 +516,7 @@ class Phase2ContractTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.get_json()["ok"])
+        self.assertIn("not yet supported", response.get_json().get("message", "").lower())
 
     def test_legacy_connect_without_manufacturer_id_still_works(self):
         response = self._connect()

@@ -93,9 +93,11 @@ function collectionChips(model, name) {
 
 /* ---------- simple login defaults (identification is backend-only) ---------- */
 let appliedLoginDefaults = {
+  gateway: $('gatewayInput') ? $('gatewayInput').value : '',
   username: $('userInput') ? $('userInput').value : '',
   password: $('passInput') ? $('passInput').value : '',
 };
+let loginDefaultsRequest = 0;
 
 function applyLoginDefault(id, value, previous) {
   const field = $(id);
@@ -106,17 +108,23 @@ function applyLoginDefault(id, value, previous) {
 }
 
 async function loadLoginDefaults() {
+  const seq = ++loginDefaultsRequest;
   try {
     const selector = $('manufacturerInput');
     const selected = selector && selector.value ? selector.value : '';
     const query = selected ? '?manufacturer_id=' + encodeURIComponent(selected) : '';
-    const res = await fetch('/api/login-defaults' + query);
+    const res = await fetch('/api/login-defaults' + query, {cache: 'no-store'});
+    if (seq !== loginDefaultsRequest) return;
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    if (data.gateway) $('gatewayInput').value = data.gateway;
+    if (seq !== loginDefaultsRequest) return;
+    const currentSelected = selector && selector.value ? selector.value : '';
+    if (currentSelected !== selected) return;
+    applyLoginDefault('gatewayInput', data.gateway, appliedLoginDefaults.gateway);
     applyLoginDefault('userInput', data.username, appliedLoginDefaults.username);
     applyLoginDefault('passInput', data.password, appliedLoginDefaults.password);
     appliedLoginDefaults = {
+      gateway: data.gateway || '',
       username: data.username || '',
       password: data.password || '',
     };
@@ -127,6 +135,7 @@ async function loadLoginDefaults() {
     msg.className = 'msg' + (data.message ? ' error' : '');
     msg.textContent = data.message || '';
   } catch (e) {
+    if (seq !== loginDefaultsRequest) return;
     // Keep editable fallback values from the markup; no connector details shown.
     $('loginMsg').className = 'msg error';
     $('loginMsg').textContent = 'Could not check the local gateway. You can still edit the fields and connect.';
@@ -536,16 +545,25 @@ async function init() {
   if (manufacturerSelect) {
     manufacturerSelect.addEventListener('change', () => { loadLoginDefaults(); });
   }
-  await loadLoginDefaults();
   try {
     const res = await fetch('/api/session');
     const session = await res.json();
     if (session.connected) {
-      if (session.gateway) $('gatewayBadge').textContent = session.gateway + ' ✓';
+      if (session.manufacturer_id && manufacturerSelect) {
+        manufacturerSelect.value = session.manufacturer_id;
+      }
+      if (session.gateway) {
+        // Active session is authoritative; set fields as the current defaults
+        // baseline so user edits are still respected after this restore.
+        $('gatewayInput').value = session.gateway;
+        appliedLoginDefaults.gateway = session.gateway;
+        $('gatewayBadge').textContent = session.gateway + ' ✓';
+      }
       enterDashboard();
       return;
     }
   } catch (e) { /* no active session — show login */ }
+  await loadLoginDefaults();
   show('loginView', true);
   show('dashView', false);
 }

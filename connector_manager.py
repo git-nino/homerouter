@@ -59,8 +59,9 @@ SUPPORTED_TRANSFORMS = {
     "voip_status_label",
     "used_percent",
     "scale",
+    "first",
 }
-CONDITION_OPERATORS = {"equals", "not_equals", "contains", "prefix", "regex"}
+CONDITION_OPERATORS = {"eq", "equals", "ne", "not_equals", "contains", "prefix", "regex"}
 ID_OPERATORS = {"equals", "not_equals", "contains", "prefix", "regex"}
 AVAILABILITY_VALUES = {item.value for item in Availability}
 DOMAIN_VALUES = {item.value for item in Domain}
@@ -1164,14 +1165,14 @@ class ConnectorManager:
                         "error", "empty_credential_field", f"{path}.{field}",
                         f"credential field '{field}' must not be empty",
                     ))
-            # A suggestion may intentionally provide no defaults. Both fields
-            # must then be empty; a partial pair is ambiguous and rejected.
+            # A suggestion may intentionally provide no defaults. A password
+            # default without a username is ambiguous and rejected.
             username = str(item.get("default_username") or "")
             password = str(item.get("default_password") or "")
-            if bool(username) != bool(password):
+            if bool(password) and not bool(username):
                 issues.append(ValidationIssue(
                     "error", "partial_credential_defaults", path,
-                    "default_username and default_password must both be set or both be empty",
+                    "default_password cannot be set without default_username",
                 ))
             if item.get("fallback_passwords") is not None and not isinstance(item.get("fallback_passwords"), list):
                 issues.append(ValidationIssue(

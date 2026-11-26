@@ -78,9 +78,9 @@ class PwaBrandingTests(unittest.TestCase):
         brand_text = re.sub(r"<[^>]+>", "", brand.group(1)).strip()
         self.assertEqual(brand_text, "◈ FTTH viewer")
 
-    def test_service_worker_cache_is_v9_and_references_branding_assets(self):
-        self.assertIn("const CACHE = 'gwmon-v9';", self.worker)
-        self.assertNotIn("gwmon-v8", self.worker)
+    def test_service_worker_cache_is_v10_and_references_branding_assets(self):
+        self.assertIn("const CACHE = 'gwmon-v11';", self.worker)
+        self.assertNotIn("gwmon-v10", self.worker)
         shell = self.worker.split("const SHELL = [", 1)[1].split("];", 1)[0]
         for asset in re.findall(r"'([^']+)'", shell):
             if asset == "/":

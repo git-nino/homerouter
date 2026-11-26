@@ -277,7 +277,9 @@
         },
         "operator": {
           "enum": [
+            "eq",
             "equals",
+            "ne",
             "not_equals",
             "contains",
             "prefix",
@@ -481,7 +483,9 @@
         },
         "operator": {
           "enum": [
+            "eq",
             "equals",
+            "ne",
             "not_equals",
             "contains",
             "prefix",
@@ -610,6 +614,16 @@
             "$ref": "#/$defs/condition"
           }
         },
+        "source_field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "field": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "constructor": {
+          "type": "string",
+          "minLength": 1
+        },
         "priority": {
           "type": "integer",
           "minimum": 0,
@@ -643,9 +657,8 @@
         "availability_on_missing": {
           "$ref": "#/$defs/availability"
         },
-        "constructor": {
-          "type": "string",
-          "minLength": 1
+        "dedupe_items": {
+          "type": "boolean"
         }
       }
     },

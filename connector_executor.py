@@ -105,15 +105,16 @@ def _dig(data: Any, field_path: str) -> Any:
 def _compare(value: Any, operator: str, expected: Any) -> bool:
     actual = str(value)
     wanted = str(expected)
-    if operator == "equals":
+    op = str(operator or "eq").strip().lower()
+    if op in ("eq", "equals", "=="):
         return actual == wanted
-    if operator == "not_equals":
+    if op in ("ne", "not_equals", "!="):
         return actual != wanted
-    if operator == "contains":
+    if op == "contains":
         return wanted in actual
-    if operator == "prefix":
+    if op == "prefix":
         return actual.startswith(wanted)
-    if operator == "regex":
+    if op == "regex":
         try:
             return re.search(wanted, actual) is not None
         except re.error:
@@ -621,7 +622,8 @@ class ConnectorExecutor:
             value = _dig(context, str(condition.get("field", "")))
             if value is None:
                 return False
-            if not _compare(value, condition.get("operator"), condition.get("value")):
+            operator = condition.get("operator") or condition.get("op") or "eq"
+            if not _compare(value, operator, condition.get("value")):
                 return False
         return True
 
@@ -809,8 +811,10 @@ class ConnectorExecutor:
             return _MISSING
         pattern = re.compile(r'new\s+' + re.escape(ctor) + r'\s*\((.*?)\)\s*(?:,|\)|;)', re.S)
         fields = rule.get("item_fields") or {}
-        items: List[Dict[str, Any]] = []
+        source_field = rule.get("source_field") or rule.get("field")
+        items: List[Any] = []
         seen: Set[Tuple[Any, ...]] = set()
+        seen_items: Set[str] = set()
         for match in pattern.finditer(result.text or ""):
             args = self._parse_js_ctor_args(match.group(1))
             key = tuple(str(a) if a is not None else None for a in args)
@@ -818,8 +822,21 @@ class ConnectorExecutor:
                 continue
             seen.add(key)
             source = {"args": args, "__index__": len(items)}
+            if source_field:
+                if not self._conditions_met(rule, source):
+                    continue
+                value = _dig(source, str(source_field))
+                if _is_missing(value):
+                    continue
+                items.append(value)
+                continue
             item = self._item_from_fields(fields, source, rule, index=len(items))
             if item and self._conditions_met(rule, item):
+                if rule.get("dedupe_items"):
+                    item_key = json.dumps(item, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+                    if item_key in seen_items:
+                        continue
+                    seen_items.add(item_key)
                 items.append(item)
         if not items:
             return _MISSING
@@ -881,6 +898,10 @@ class ConnectorExecutor:
             if total <= 0:
                 return None
             return round((total - free) / total * 100, 1)
+        if name == "first":
+            if isinstance(value, (list, tuple)):
+                return value[0] if value else None
+            return value
         raise ExtractionError(f"unsupported transform {name!r}")
 
     def _apply_extraction(
@@ -908,7 +929,10 @@ class ConnectorExecutor:
                     last_error = endpoint_errors[endpoint_id]
                     continue
                 result = self.endpoint_results.get(endpoint_id)
-                if result is None or not self._conditions_met(rule, result.payload):
+                if result is None:
+                    continue
+                # js_constructor_objects evaluates conditions per extracted row.
+                if rule.get("method") != "js_constructor_objects" and not self._conditions_met(rule, result.payload):
                     continue
                 try:
                     raw = self._extract(rule, result)

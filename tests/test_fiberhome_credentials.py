@@ -92,7 +92,7 @@ class FiberHomeCredentialTests(unittest.TestCase):
         }
         with patch.object(self.app_module, "run_discovery", return_value=discovery):
             payload = self.client.get(
-                "/api/login-defaults?manufacturer_id=huawei"
+                "/api/login-defaults?manufacturer_id=unknown_vendor"
             ).get_json()
         self.assertEqual(payload["username"], "")
         self.assertEqual(payload["password"], "")

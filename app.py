@@ -159,20 +159,29 @@ def _safe_credential_suggestion(manager, key):
     }
 
 
-def _login_defaults(manager, discovery):
+def _login_defaults(manager, discovery, manufacturer_id=""):
     """Build the only login data the browser needs; no connector details."""
 
     selected = discovery.get("selected_profile")
+    credential_key = "generic_user_supplied"
     if selected:
         profile = manager.get(selected) or {}
         credential_key = ((profile.get("auth") or {}).get(
             "credential_suggestion_key"
-        ))
-    else:
-        credential_key = "generic_user_supplied"
+        )) or credential_key
+    elif manufacturer_id:
+        catalog, _ = _load_equipment_catalog()
+        refs = _manufacturer_profile_ids(str(manufacturer_id).strip(), catalog)
+        if refs:
+            profile = manager.get(refs[0]) or {}
+            credential_key = ((profile.get("auth") or {}).get(
+                "credential_suggestion_key"
+            )) or credential_key
     suggestion = manager.credential_suggestion(credential_key) or {}
+    default_gateway = str(suggestion.get("default_gateway") or "").strip()
+    gateway = default_gateway or str(discovery.get("gateway") or "")
     return {
-        "gateway": discovery.get("gateway", ""),
+        "gateway": gateway,
         "gateway_detected": bool(discovery.get("gateway_detected")),
         "supported": bool(selected),
         "username": str(suggestion.get("default_username") or ""),
@@ -482,8 +491,8 @@ def load_manufacturers(manager=None):
         if not ident or not name or ident in seen:
             continue
         refs = entry.get("profiles")
-        if not isinstance(refs, list) or not refs:
-            continue
+        if not isinstance(refs, list):
+            refs = []
         has_usable = False
         saw_known = False
         for ref in refs:
@@ -499,11 +508,11 @@ def load_manufacturers(manager=None):
                 if profile.get("enabled", True):
                     has_usable = True
                     break
-        # If manager knows these profile refs and none are usable, hide manufacturer.
-        # If refs exist but manager doesn't know them (e.g. synthetic test manager),
-        # keep catalog-advertised manufacturer to avoid false negatives.
-        if saw_known and not has_usable:
-            continue
+        # Keep catalog-advertised manufacturers visible. If profiles are known
+        # but none are usable, the manufacturer remains selectable and will get an
+        # explicit unsupported message at connect/login-defaults time.
+        if refs and saw_known and not has_usable:
+            pass
         seen.add(ident)
         manufacturers.append({"id": ident, "name": name})
 
@@ -555,8 +564,9 @@ def api_login_defaults():
     only and never calls the selected connector's authentication flow.
     """
 
-    discovery = run_discovery(manufacturer_id=_request_manufacturer_id())
-    return jsonify(_login_defaults(state["manager"], discovery))
+    manufacturer_id = _request_manufacturer_id()
+    discovery = run_discovery(manufacturer_id=manufacturer_id)
+    return jsonify(_login_defaults(state["manager"], discovery, manufacturer_id=manufacturer_id))
 
 
 @app.route("/api/discovery")
@@ -568,10 +578,12 @@ def api_discovery():
 def api_session():
     with _lock:
         executor = state["executor"]
+        connected = state["connected"] and executor is not None
+        gateway = state["gateway"].get("gateway") if connected else None
         return jsonify({
-            "connected": state["connected"] and executor is not None,
-            "gateway": state["gateway"].get("gateway"),
-            "manufacturer_id": state.get("manufacturer_id"),
+            "connected": connected,
+            "gateway": gateway,
+            "manufacturer_id": state.get("manufacturer_id") if connected else None,
         })
 
 
@@ -615,10 +627,34 @@ def api_connect():
     profile_id = discovery.get("selected_profile")
     host = discovery.get("gateway") or requested_host
     profile = manager.get(profile_id) if profile_id else None
+    if manufacturer_id and profile_id:
+        catalog, _ = _load_equipment_catalog()
+        allowed_ids = set(_manufacturer_profile_ids(manufacturer_id, catalog))
+        profile_mid = str((profile or {}).get("manufacturer_id") or "").strip()
+        all_catalog_ids = {
+            str(ref).strip()
+            for entry in catalog.get("manufacturers", []) if isinstance(entry, dict)
+            for ref in (entry.get("profiles") or []) if str(ref).strip()
+        }
+        if not allowed_ids:
+            # Manufacturer is advertised but has no usable profile mapping.
+            profile = None
+        elif profile_id in allowed_ids or profile_mid == manufacturer_id:
+            pass
+        elif profile_id in all_catalog_ids:
+            # Selected profile belongs to a different catalog-mapped manufacturer.
+            profile = None
+        else:
+            # Synthetic/uncatalogued profile in tests: preserve legacy behavior.
+            pass
     if profile is None or not profile.get("enabled", True):
+        msg = UNSUPPORTED_GATEWAY_MESSAGE
+        if manufacturer_id and (not profile_id or profile is None):
+            selected_name = next((m.get("name") for m in manufacturers if m.get("id") == manufacturer_id), manufacturer_id.upper())
+            msg = f"Selected equipment ({selected_name}) is not yet supported."
         return jsonify({
             "ok": False,
-            "message": UNSUPPORTED_GATEWAY_MESSAGE,
+            "message": msg,
         }), 400
 
     # Use the submitted password exactly once. No default substitution,

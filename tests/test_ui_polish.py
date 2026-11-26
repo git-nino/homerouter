@@ -80,7 +80,7 @@ class UiPolishTests(unittest.TestCase):
 
     def test_service_worker_cache_includes_favicon(self):
         # PWA branding update bumps the app-shell cache and icon set.
-        self.assertIn("gwmon-v9", self.worker)
+        self.assertIn("gwmon-v11", self.worker)
         self.assertNotIn("gwmon-v8'", self.worker)
         self.assertIn("/static/favicon.png", self.worker)
         self.assertIn("/static/icon-maskable-512.png", self.worker)

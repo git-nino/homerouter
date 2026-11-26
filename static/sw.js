@@ -1,6 +1,6 @@
 /* Service worker for offline app shell. localhost is a secure context,
    so this installs without HTTPS when the app runs on the phone itself. */
-const CACHE = 'gwmon-v9';
+const CACHE = 'gwmon-v11';
 const SHELL = [
   '/',
   '/static/style.css',
@@ -38,8 +38,22 @@ self.addEventListener('fetch', (event) => {
   // Live router data must never be served from the cache.
   if (url.pathname.startsWith('/api/')) return;
 
-  if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(() => caches.match('/')));
+  // Network-first for navigations and core shell assets so updated UI/defaults
+  // are not blocked by stale PWA cache; fall back to cache when offline.
+  const networkFirst = request.mode === 'navigate' ||
+    url.pathname === '/' ||
+    url.pathname === '/static/app.js' ||
+    url.pathname === '/static/style.css' ||
+    url.pathname === '/static/manifest.webmanifest';
+
+  if (networkFirst) {
+    event.respondWith(
+      fetch(request).then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
+        return response;
+      }).catch(() => caches.match(request).then((c) => c || caches.match('/')))
+    );
     return;
   }
 

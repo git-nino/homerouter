@@ -95,12 +95,16 @@ fetch_project() {
   echo "==> Fetching project into ${APP_DIR}"
   mkdir -p "$(dirname "$APP_DIR")"
 
+  # Never prompt for GitHub credentials; this repo is public and the
+  # installer must work non-interactively when piped from curl.
+  export GIT_TERMINAL_PROMPT=0
+
   if command -v git >/dev/null 2>&1; then
     if git clone --depth 1 --branch "$BRANCH" "${REPO_URL:-$HTTPS_REPO}" "$APP_DIR" 2>/dev/null; then
       return 0
     fi
-    echo "    HTTPS clone failed — trying SSH remote"
-    if GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new' \
+    echo "    HTTPS clone failed — trying SSH remote (key auth only)"
+    if GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10' \
        git clone --depth 1 --branch "$BRANCH" "$SSH_REPO" "$APP_DIR" 2>/dev/null; then
       return 0
     fi

@@ -228,6 +228,46 @@ class HuaweiExtractionTests(unittest.TestCase):
         self.assertEqual(cnt.availability, Availability.AVAILABLE)
         self.assertEqual(cnt.value, 2)
 
+    def test_connected_devices_hex_escaped_ip_and_validation(self):
+        routes = _success_routes()
+        routes["/html/bbsp/common/GetLanUserDevInfo.asp"] = FakeResponse(
+            '<script>'
+            'function USERDevice(Domain,IpAddr,MacAddr,Port,IpType,DevType,DevStatus,PortType,Time,HostName,IPv4Enabled,IPv6Enabled,DeviceType,UserDevAlias,UserSpecifiedDeviceType,LeaseTimeRemaining,RealMacAddr){}'
+            'var LANHostInfo = new Array('
+            'new USERDevice("d","192\\x2e168\\x2e100\\x2e10","AA:BB:CC:00:00:10","LAN1","DHCP","--","Online","ETH","0","host\\x2da","1","0","0","","0","0","AA:BB:CC:00:00:10"),'
+            'new USERDevice("d","192\\x2e168\\x2e100\\x2e11","AA:BB:CC:00:00:11","LAN2","DHCP","--","Online","ETH","0","host\\x5fb","1","0","0","","0","0","AA:BB:CC:00:00:11"),'
+            'new USERDevice("d","0\\x2e0\\x2e0\\x2e0","AA:BB:CC:00:00:12","LAN3","DHCP","--","Offline","ETH","0","host-c","1","0","0","","0","0","AA:BB:CC:00:00:12"),'
+            'new USERDevice("d","","AA:BB:CC:00:00:13","LAN4","DHCP","--","Offline","ETH","0","host-d","1","0","0","","0","0","AA:BB:CC:00:00:13"),'
+            'new USERDevice("d","bad-ip","AA:BB:CC:00:00:14","LAN5","DHCP","--","Online","ETH","0","host-e","1","0","0","","0","0","AA:BB:CC:00:00:14"),'
+            'null);</script>'
+        )
+        session = FakeSession(routes)
+        ex = ConnectorExecutor(self.connector, "192.168.100.1", credentials={"username":"u","password":"p"}, manager=self.manager, session=session)
+        ex.connect(); model = ex.collect()
+        self.assertEqual(len(model.devices), 5)
+        self.assertEqual(model.devices[0].ip_address, "192.168.100.10")
+        self.assertEqual(model.devices[1].ip_address, "192.168.100.11")
+        self.assertEqual(model.devices[0].mac_address, "AA:BB:CC:00:00:10")
+        self.assertEqual(model.devices[1].mac_address, "AA:BB:CC:00:00:11")
+        self.assertEqual(model.devices[0].hostname, "host-a")
+        self.assertEqual(model.devices[1].hostname, "host_b")
+        self.assertIsNone(model.devices[2].ip_address)  # 0.0.0.0 unavailable
+        self.assertIsNone(model.devices[3].ip_address)  # empty unavailable
+        self.assertIsNone(model.devices[4].ip_address)  # invalid unavailable
+
+    def test_connected_devices_exact_duplicate_rows_deduped(self):
+        routes = _success_routes()
+        row = 'new USERDevice("d","192\\x2e168\\x2e100\\x2e10","AA:BB:CC:00:00:10","LAN1","DHCP","--","Online","ETH","0","host-a","1","0","0","","0","0","AA:BB:CC:00:00:10"),'
+        routes["/html/bbsp/common/GetLanUserDevInfo.asp"] = FakeResponse(
+            '<script>function USERDevice(Domain,IpAddr,MacAddr,Port,IpType,DevType,DevStatus,PortType,Time,HostName,IPv4Enabled,IPv6Enabled,DeviceType,UserDevAlias,UserSpecifiedDeviceType,LeaseTimeRemaining,RealMacAddr){}'
+            'var LANHostInfo = new Array(' + row + row + 'null);</script>'
+        )
+        session = FakeSession(routes)
+        ex = ConnectorExecutor(self.connector, "192.168.100.1", credentials={"username":"u","password":"p"}, manager=self.manager, session=session)
+        ex.connect(); model = ex.collect()
+        # Exact duplicate JS constructor rows are the same record; dedupe is evidence-based.
+        self.assertEqual(len(model.devices), 1)
+
     def test_wifi_ssids_collection(self):
         ssids = self.model.collections.get("ssids")
         self.assertIsNotNone(ssids)
@@ -290,6 +330,115 @@ class HuaweiIdentificationTests(unittest.TestCase):
         )
         discovery = ex.discover()
         self.assertIn("observations", discovery)
+
+
+class HuaweiSessionLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.manager, self.connector = _huawei_connector()
+
+    def test_collect_reauths_once_on_session_expired(self):
+        routes = _success_routes()
+        calls = {"deviceinfo": 0}
+        class ExpiringSession(FakeSession):
+            def request(self, method, url, **kwargs):
+                path = url.split("192.168.100.1")[-1].split(":80")[-1]
+                if path.endswith("/html/ssmp/deviceinfo/deviceinfo.asp"):
+                    calls["deviceinfo"] += 1
+                    if calls["deviceinfo"] == 1:
+                        return FakeResponse(text="<html><body><form name='login'><input name='txt_Username'/><input name='txt_Password'/></form><script>location.href='login.asp'</script></body></html>", status_code=200)
+                return super().request(method, url, **kwargs)
+        ex = ConnectorExecutor(self.connector, "192.168.100.1", credentials={"username":"root","password":"s3cret"}, manager=self.manager, session=ExpiringSession(routes))
+        ex.connect()
+        model = ex.collect()
+        self.assertGreaterEqual(calls["deviceinfo"], 2)
+        m = model.domains[Domain.DEVICE_IDENTITY]["device.model"]
+        self.assertEqual(m.availability, Availability.AVAILABLE)
+
+    def test_non_auth_http_error_not_treated_as_session_expiry(self):
+        routes = _success_routes()
+        routes["/html/ssmp/deviceinfo/deviceinfo.asp"] = FakeResponse(text="oops", status_code=500)
+        ex = ConnectorExecutor(self.connector, "192.168.100.1", credentials={"username":"root","password":"s3cret"}, manager=self.manager, session=FakeSession(routes))
+        ex.connect()
+        model = ex.collect()
+        m = model.domains[Domain.DEVICE_IDENTITY]["device.model"]
+        self.assertIn(m.availability, (Availability.ERROR, Availability.UNAVAILABLE, Availability.NOT_LOADED, Availability.INVALID))
+
+
+class HuaweiAppRefreshTests(unittest.TestCase):
+    def setUp(self):
+        import app as appmod
+        self.appmod = appmod
+        self.client = appmod.app.test_client()
+        self._orig = {k: appmod.state.get(k) for k in ["executor","connected","credentials","manufacturer_id","username","gateway"]}
+        appmod.state["connected"] = False
+        appmod.state["executor"] = None
+        appmod.state["credentials"] = None
+
+    def tearDown(self):
+        self.appmod.state.update(self._orig)
+
+    def test_api_data_401_when_not_connected(self):
+        res = self.client.get("/api/data")
+        self.assertEqual(res.status_code, 401)
+        body = res.get_json()
+        self.assertEqual(body.get("code"), "not_connected")
+        self.assertNotIn("password", str(body).lower())
+
+    def test_api_data_reauths_once_on_session_expired(self):
+        from connector_executor import SessionExpired
+        class Dummy:
+            def __init__(self):
+                self.calls = 0
+                self.connect_calls = 0
+            def collect(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise SessionExpired("expired")
+                return self.model
+            def connect(self):
+                self.connect_calls += 1
+        mgr, connector = _huawei_connector()
+        routes = _success_routes()
+        ex = ConnectorExecutor(connector, "192.168.100.1", credentials={"username":"u","password":"p"}, manager=mgr, session=FakeSession(routes))
+        ex.connect(); model = ex.collect()
+        d = Dummy(); d.model = model
+        self.appmod.state["connected"] = True
+        self.appmod.state["executor"] = d
+        self.appmod.state["credentials"] = {"username":"u","password":"p","profile_id":"huawei.hg8145x6"}
+        res = self.client.get("/api/data")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(d.connect_calls, 1)
+        self.assertEqual(d.calls, 2)
+        body = res.get_json()
+        self.assertNotIn("password", str(body).lower())
+
+    def test_api_data_session_expired_clears_state_when_reauth_fails(self):
+        from connector_executor import SessionExpired, AuthenticationError
+        class Dummy:
+            def collect(self):
+                raise SessionExpired("expired")
+            def connect(self):
+                raise AuthenticationError("bad")
+        self.appmod.state["connected"] = True
+        self.appmod.state["executor"] = Dummy()
+        self.appmod.state["credentials"] = {"username":"u","password":"p","profile_id":"huawei.hg8145x6"}
+        res = self.client.get("/api/data")
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.get_json().get("code"), "session_expired")
+        self.assertFalse(self.appmod.state["connected"])
+        self.assertIsNone(self.appmod.state["credentials"])
+
+    def test_api_data_executor_error_is_502(self):
+        from connector_executor import ExecutorError
+        class Dummy:
+            def collect(self):
+                raise ExecutorError("boom")
+        self.appmod.state["connected"] = True
+        self.appmod.state["executor"] = Dummy()
+        self.appmod.state["credentials"] = {"username":"u","password":"p"}
+        res = self.client.get("/api/data")
+        self.assertEqual(res.status_code, 502)
+        self.assertEqual(res.get_json().get("code"), "executor_error")
 
 
 class HuaweiRegressionTests(unittest.TestCase):

@@ -640,7 +640,13 @@ def api_connect():
         state["executor"] = executor
         state["username"] = username
         state["manufacturer_id"] = manufacturer_id
-        state["credentials"] = {"username": username, "profile_id": profile_id}
+        # Password kept in memory only for transparent re-auth on router session
+        # expiry; never serialized to API responses, logs, or browser storage.
+        state["credentials"] = {
+            "username": username,
+            "password": str(password),
+            "profile_id": profile_id,
+        }
         state["connected"] = True
         state["gateway"] = {
             "gateway": host,
@@ -661,19 +667,34 @@ def api_data():
         executor = state["executor"]
         connected = state["connected"]
         speed = dict(state["speedtest"])
+        creds = dict(state.get("credentials") or {})
     if not connected or executor is None:
-        return jsonify({"error": "Not connected"}), 401
+        return jsonify({"error": "Not connected", "code": "not_connected"}), 401
     try:
         model = executor.collect()
     except SessionExpired:
-        with _lock:
-            state["connected"] = False
-            state["executor"] = None
-            state["credentials"] = None
-            state["manufacturer_id"] = None
-        return jsonify({"error": "Router session expired. Please reconnect."}), 401
-    except (AuthenticationError, ExecutorError) as exc:
-        return jsonify({"error": str(exc)}), 502
+        # Transparent single re-auth attempt using in-memory runtime creds only.
+        reauthed = False
+        if creds.get("username") and creds.get("password") is not None:
+            try:
+                executor.connect()
+                model = executor.collect()
+                reauthed = True
+            except (AuthenticationError, SessionExpired):
+                reauthed = False
+            except ExecutorError:
+                reauthed = False
+        if not reauthed:
+            with _lock:
+                state["connected"] = False
+                state["executor"] = None
+                state["credentials"] = None
+                state["manufacturer_id"] = None
+            return jsonify({"error": "Router session expired. Please reconnect.", "code": "session_expired"}), 401
+    except AuthenticationError as exc:
+        return jsonify({"error": "Authentication failed. Please reconnect.", "code": "auth_error"}), 401
+    except ExecutorError as exc:
+        return jsonify({"error": str(exc), "code": "executor_error"}), 502
     return jsonify(_public_model_payload(model, speed))
 
 

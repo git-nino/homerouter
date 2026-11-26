@@ -238,20 +238,35 @@ function enterDashboard() {
   pollTimer = setInterval(refreshData, 5000);
 }
 
+let lastDataOk = false;
+
 /* ---------- data refresh ---------- */
 async function refreshData() {
   try {
     const res = await fetch('/api/data');
     if (res.status === 401) {
-      leaveDashboard('Session expired. Please reconnect.');
-      return;
+      let body = {};
+      try { body = await res.json(); } catch (_) {}
+      const code = body.code || '';
+      if (code === 'session_expired' || code === 'not_connected' || code === 'auth_error') {
+        leaveDashboard(body.error || 'Session expired. Please reconnect.');
+        return;
+      }
+      throw new Error(body.error || 'HTTP 401');
     }
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      let body = {};
+      try { body = await res.json(); } catch (_) {}
+      throw new Error(body.error || ('HTTP ' + res.status));
+    }
     render(await res.json());
+    lastDataOk = true;
+    $('statusDot').className = 'dot dot-on';
     $('statusDot').title = 'Connection status';
   } catch (e) {
-    // Keep the last valid values and say so explicitly.
-    $('lastUpdate').textContent = 'stale — refresh failed: ' + e.message;
+    // Keep the last valid values and say so explicitly; do not turn all fields into errors.
+    $('lastUpdate').textContent = (lastDataOk ? 'stale — refresh failed' : 'unavailable — refresh failed') + ': ' + e.message;
+    $('statusDot').className = 'dot dot-off';
     $('statusDot').title = 'Stale data — last refresh failed';
   }
 }

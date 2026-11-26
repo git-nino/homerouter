@@ -1587,6 +1587,7 @@
               "target": "ip_address",
               "field": "args[1]",
               "transforms": [
+                "decode_hex_escapes",
                 "strip"
               ]
             },
@@ -1602,6 +1603,7 @@
               "target": "link_type",
               "field": "args[7]",
               "transforms": [
+                "decode_hex_escapes",
                 "strip"
               ]
             },
@@ -1609,6 +1611,7 @@
               "target": "address_source",
               "field": "args[4]",
               "transforms": [
+                "decode_hex_escapes",
                 "strip"
               ]
             },
@@ -1616,6 +1619,7 @@
               "target": "status",
               "field": "args[6]",
               "transforms": [
+                "decode_hex_escapes",
                 "strip"
               ]
             }

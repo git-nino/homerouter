@@ -304,16 +304,38 @@ class ConnectorExecutor:
             "No configured authentication flow succeeded for this profile."
         )
 
+    @staticmethod
+    def _looks_like_login_page(text: str) -> bool:
+        if not text:
+            return False
+        sample = text[:4096].lower()
+        # Heuristics: Huawei/FiberHome login pages; avoid matching normal data pages.
+        markers = (
+            "login.asp",
+            "name='txt_username'",
+            'name="txt_username"',
+            "txt_password",
+            "login.cgi",
+            "getrandcount.asp",
+        )
+        hits = sum(1 for m in markers if m in sample)
+        if hits >= 2:
+            return True
+        if "top.location.replace" in sample and "login" in sample:
+            return True
+        return False
+
     def _session_expired(self) -> bool:
         field = self.session_spec.get("validity_field")
-        if not field:
-            return False
-        invalid = {str(value) for value in self.session_spec.get("invalid_values", [])}
-        if not invalid:
-            return False
+        if field:
+            invalid = {str(value) for value in self.session_spec.get("invalid_values", [])}
+            if invalid:
+                for result in self.endpoint_results.values():
+                    value = _dig(result.payload, field)
+                    if value is not None and str(value) in invalid:
+                        return True
         for result in self.endpoint_results.values():
-            value = _dig(result.payload, field)
-            if value is not None and str(value) in invalid:
+            if self._looks_like_login_page(getattr(result, "text", "")):
                 return True
         return False
 
@@ -457,6 +479,8 @@ class ConnectorExecutor:
                 text = read_bounded_text(response)
             except UnsafeProfileRequest as exc:
                 raise EndpointError(str(exc)) from exc
+            if endpoint.get("auth") is not False and self._looks_like_login_page(text):
+                raise SessionExpired("Gateway session expired. Please reconnect.")
             if endpoint.get("format", "json") == "json":
                 payload, text = _parse_json_text(text)
             else:
@@ -506,7 +530,13 @@ class ConnectorExecutor:
             raise AuthenticationError("Connect before collecting router data.")
         for attempt in range(2):
             self._clear_collection_results()
-            model = self._collect_once()
+            try:
+                model = self._collect_once()
+            except SessionExpired:
+                if attempt == 0:
+                    self._authenticate(force=True)
+                    continue
+                raise
             if not self._session_expired():
                 model.updated_at = datetime.now(timezone.utc)
                 self.last_model = model
@@ -780,8 +810,13 @@ class ConnectorExecutor:
         pattern = re.compile(r'new\s+' + re.escape(ctor) + r'\s*\((.*?)\)\s*(?:,|\)|;)', re.S)
         fields = rule.get("item_fields") or {}
         items: List[Dict[str, Any]] = []
+        seen: Set[Tuple[Any, ...]] = set()
         for match in pattern.finditer(result.text or ""):
             args = self._parse_js_ctor_args(match.group(1))
+            key = tuple(str(a) if a is not None else None for a in args)
+            if key in seen:
+                continue
+            seen.add(key)
             source = {"args": args, "__index__": len(items)}
             item = self._item_from_fields(fields, source, rule, index=len(items))
             if item and self._conditions_met(rule, item):
@@ -947,10 +982,19 @@ class ConnectorExecutor:
                     )
                     if not identifier:
                         continue
+                    ip = item.get("ip_address")
+                    ip_s = str(ip).strip() if ip is not None else ""
+                    if ip_s:
+                        try:
+                            ip_obj = ipaddress.ip_address(ip_s)
+                            if ip_obj.is_unspecified:
+                                ip_s = ""
+                        except Exception:
+                            ip_s = ""
                     devices.append(ConnectedDevice(
                         id=str(identifier),
                         hostname=item.get("hostname"),
-                        ip_address=item.get("ip_address"),
+                        ip_address=ip_s or None,
                         mac_address=item.get("mac_address"),
                         link_type=item.get("link_type"),
                         address_source=item.get("address_source"),
